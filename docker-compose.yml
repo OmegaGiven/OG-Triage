@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: gauge_ai_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: gauge
+      POSTGRES_PASSWORD: gauge_dev_password
+      POSTGRES_DB: gauge_ai_claims
+    ports:
+      # Host port 5544 (non-default) to avoid colliding with any local Postgres on 5432.
+      - "5544:5432"
+    volumes:
+      - gauge_ai_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gauge -d gauge_ai_claims"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  gauge_ai_pgdata:
