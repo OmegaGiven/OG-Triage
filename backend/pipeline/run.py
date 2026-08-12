@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from db.models import Denial  # noqa: E402
 from db.session import SessionLocal  # noqa: E402
+from profiles import get_profile  # noqa: E402
 
 from pipeline.classify import classify_denial  # noqa: E402
 from pipeline.draft_appeal import draft_appeal  # noqa: E402
@@ -57,11 +58,14 @@ def process_denial(db, denial: Denial) -> str:
     """Run one denial through the full pipeline. Commits after every status
     transition so a crash mid-pipeline leaves the denial in whatever state
     it last successfully reached, not in an inconsistent partial state."""
-    logger.info("[%s] processing (claim_ref=%s)", denial.id, denial.claim_ref)
+    profile = get_profile(denial.source_company)
+    logger.info(
+        "[%s] processing (claim_ref=%s, profile=%s)", denial.id, denial.claim_ref, profile.key
+    )
     denial.status = "processing"
     db.commit()
 
-    extraction = extract_denial(db, denial)
+    extraction = extract_denial(db, denial, profile)
     if not extraction.success:
         logger.error("[%s] extraction failed: %s", denial.id, extraction.error)
         denial.status = "needs_review"
@@ -69,7 +73,7 @@ def process_denial(db, denial: Denial) -> str:
         return denial.status
     db.commit()  # persist the successful extraction row + token_usage row
 
-    classification = classify_denial(db, denial, extraction.data)
+    classification = classify_denial(db, denial, extraction.data, profile)
     if not classification.success:
         logger.error("[%s] classification failed: %s", denial.id, classification.error)
         denial.status = "needs_review"
@@ -90,7 +94,7 @@ def process_denial(db, denial: Denial) -> str:
         db.commit()
         return denial.status
 
-    appeal = draft_appeal(db, denial, extraction.data, classification.data)
+    appeal = draft_appeal(db, denial, extraction.data, classification.data, profile)
     if not appeal.success:
         logger.error("[%s] appeal drafting failed: %s", denial.id, appeal.error)
         denial.status = "needs_review"
@@ -119,12 +123,16 @@ def process_denial_by_id(denial_id: uuid.UUID | str) -> str:
         db.close()
 
 
-def process_all_new(limit: int | None = None) -> dict[str, int]:
-    """Batch entry point: process every denial with status='new'. Returns a
-    dict of final-status -> count."""
+def process_all_new(limit: int | None = None, source_company: str | None = None) -> dict[str, int]:
+    """Batch entry point: process every denial with status='new', optionally
+    scoped to one source_company/profile (e.g. to run just the newly-seeded
+    Reliable Medical denials without touching CEP's). Returns a dict of
+    final-status -> count."""
     db = SessionLocal()
     try:
         query = db.query(Denial).filter(Denial.status == "new").order_by(Denial.claim_ref)
+        if source_company:
+            query = query.filter(Denial.source_company == source_company)
         if limit:
             query = query.limit(limit)
         denials = query.all()
@@ -160,13 +168,24 @@ def main():
     parser.add_argument(
         "--limit", type=int, default=None, help="Cap the number of denials processed with --all."
     )
+    parser.add_argument(
+        "--source-company",
+        type=str,
+        default=None,
+        help=(
+            "With --all, only process denials with this source_company "
+            "(e.g. 'reliable_medical'). Must match a registered profile key "
+            "in backend/profiles/. Omit to process --all's denials regardless "
+            "of company."
+        ),
+    )
     args = parser.parse_args()
 
     if args.denial_id:
         status = process_denial_by_id(args.denial_id)
         print(f"denial {args.denial_id}: {status}")
     else:
-        counts = process_all_new(limit=args.limit)
+        counts = process_all_new(limit=args.limit, source_company=args.source_company)
         print("\nBatch run complete:")
         for status, n in sorted(counts.items()):
             print(f"  {status}: {n}")

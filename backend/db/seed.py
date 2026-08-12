@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """
-Loads backend/data/denials_synthetic.json into the `denials` table.
+Loads a synthetic denials JSON file into the `denials` table. Defaults to
+backend/data/denials_synthetic.json (the original Comprehensive EyeCare
+Partners dataset); pass a different path to seed another company's dataset,
+e.g. backend/data/denials_reliable_medical.json (Phase 4's second company).
 
 Idempotent: each synthetic record's `claim_ref` is treated as a stable
 identifier for seeding purposes -- rows are only inserted if no existing
@@ -9,6 +12,7 @@ re-run; a second run inserts zero additional rows.
 
 Usage:
     python backend/db/seed.py
+    python backend/db/seed.py backend/data/denials_reliable_medical.json
 """
 
 import json
@@ -20,11 +24,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from db.models import Denial  # noqa: E402
 from db.session import SessionLocal  # noqa: E402
 
-DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "denials_synthetic.json"
+DEFAULT_DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "denials_synthetic.json"
 
 
-def load_denials(session):
-    records = json.loads(DATA_PATH.read_text())
+def load_denials(session, data_path: Path):
+    records = json.loads(data_path.read_text())
 
     existing_claim_refs = {
         row[0]
@@ -56,15 +60,17 @@ def load_denials(session):
 
 
 def main():
-    if not DATA_PATH.exists():
+    data_path = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_DATA_PATH
+    if not data_path.exists():
         raise SystemExit(
-            f"Synthetic dataset not found at {DATA_PATH}. "
-            "Run backend/data/generate_synthetic_data.py first."
+            f"Synthetic dataset not found at {data_path}. "
+            "Run backend/data/generate_synthetic_data.py "
+            "(or generate_synthetic_data_reliable_medical.py) first."
         )
 
     session = SessionLocal()
     try:
-        inserted, skipped = load_denials(session)
+        inserted, skipped = load_denials(session, data_path)
     finally:
         session.close()
 

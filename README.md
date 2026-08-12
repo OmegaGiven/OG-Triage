@@ -1,10 +1,11 @@
 # Gauge AI Automations — Claims Denial Triage + Appeal Drafting
 
-**Status: Phase 1-3 done.** This repo holds a pipeline that ingests insurance
+**Status: Phase 1-4 done.** This repo holds a pipeline that ingests insurance
 claim-denial letters, extracts structured fields, classifies the denial
 reason, and drafts an appeal letter, with a Postgres-backed audit trail and a
-deterministic eval/regression harness. A React/TypeScript review UI is not
-built yet.
+deterministic eval/regression harness. The pipeline is profile-driven and
+currently drives two portfolio companies' claim types (eye-care and DME) off
+one shared codebase. A React/TypeScript review UI is not built yet.
 
 - **Phase 1** — the Postgres schema (`denials`, `extractions`,
   `classifications`, `appeals`, `corrections`, `eval_runs`, `token_usage`),
@@ -23,6 +24,14 @@ built yet.
   eval harness that scores the pipeline's persisted results against
   `eval_labeled.json`'s ground truth and writes a regression-checked
   `eval_runs` row. See "Phase 3 — Evaluation" below.
+- **Phase 4** — `backend/profiles/`: refactored the Phase 2 pipeline to be
+  driven by a `CompanyProfile` (extraction schema, prompts, appeal guidance)
+  resolved from `denials.source_company`, instead of hardcoded
+  Comprehensive-EyeCare-Partners text, and added a second company profile,
+  "Reliable Medical" (a fictional national DME/CRT provider), with its own
+  synthetic dataset. Proves the architecture generalizes to a genuinely
+  different claim type on the same pipeline code. See "Phase 4 —
+  Multi-Company Profiles" below.
 
 The `backend/requirements.txt` includes `fastapi` and `pydantic` because
 those are pinned dependencies for a future API/frontend phase, not because
@@ -36,11 +45,17 @@ app/
     db/
       models.py          # SQLAlchemy models (the schema)
       session.py          # engine/session, reads DATABASE_URL
-      seed.py              # loads backend/data/denials_synthetic.json into Postgres
+      seed.py              # loads a denials JSON file into Postgres (any company)
     data/
-      denials_synthetic.json      # 48 synthetic denial letters
-      eval_labeled.json           # 24-record labeled subset (ground truth + required appeal elements)
-      generate_synthetic_data.py  # re-runnable, seeded generator that produces the two files above
+      denials_synthetic.json                    # 48 synthetic CEP denial letters
+      eval_labeled.json                         # 24-record labeled subset (CEP, ground truth + required appeal elements)
+      generate_synthetic_data.py                # re-runnable, seeded generator that produces the two files above
+      denials_reliable_medical.json              # 14 synthetic Reliable Medical (DME) denial letters
+      generate_synthetic_data_reliable_medical.py # re-runnable, seeded generator for the DME dataset
+    profiles/                     # Phase 4: CompanyProfile abstraction (see below)
+      base.py
+      comprehensive_eyecare_partners.py
+      reliable_medical_dme.py
     alembic/                      # migrations (one initial migration, matches models.py)
     requirements.txt
     .env.example
@@ -104,7 +119,9 @@ python backend/db/seed.py
 Loads all 48 denials from `backend/data/denials_synthetic.json` into the
 `denials` table (`source_company = "comprehensive_eyecare_partners"`,
 `status = "new"`). Idempotent — re-running skips rows whose `claim_ref`
-already exists rather than duplicating them.
+already exists rather than duplicating them. Pass a different path to seed
+another company's dataset, e.g.
+`python backend/db/seed.py backend/data/denials_reliable_medical.json`.
 
 ### Regenerating the synthetic dataset
 
@@ -224,6 +241,122 @@ move). See the comment above `REGRESSION_THRESHOLD_PP` in `eval/run_eval.py`
 for the full reasoning — this is a starting point tuned by judgment, not a
 statistically derived value, and the right long-term fix if it proves noisy
 is a larger labeled set, not just retuning the number.
+
+## Phase 4 — Multi-Company Profiles
+
+The Phase 2 pipeline (`extract.py`/`classify.py`/`draft_appeal.py`) was
+originally built with Comprehensive EyeCare Partners' extraction schema and
+prompt text hardcoded directly into those three files. Phase 4 pulls all of
+that company-specific configuration out into `backend/profiles/`, so the
+same pipeline code drives multiple portfolio companies, and adds a second
+profile — "Reliable Medical," a fictional national complex rehab technology
+(CRT) / durable medical equipment (DME) provider — to prove it's a real
+abstraction and not just a plan for one.
+
+### How the profile system works
+
+`backend/profiles/base.py` defines `CompanyProfile`, a frozen dataclass
+holding everything that varies per company:
+
+- `key` / `display_name` — `key` must exactly match the `source_company`
+  value on that company's `denials` rows; it's the lookup key.
+- `extraction_tool` — the full Anthropic tool schema (name, description,
+  `input_schema`) forced via `tool_choice` in stage 1. Different companies
+  have genuinely different structured fields (e.g. `cpt_code` vs.
+  `hcpcs_code`, and DME-only fields like `equipment_type` and
+  `lmn_reference_number` for a Letter of Medical Necessity reference — a
+  real DME-specific document requirement eye-care claims have no equivalent
+  of). `extraction_required_fields` is derived from the schema's
+  `required` array, not duplicated by hand.
+- `extraction_system_prompt` — company/domain framing for stage 1.
+- `classification_system_prompt_intro` + `category_guide` — company framing
+  and a CARC-code guide for stage 2, combined by
+  `classification_system_prompt()`.
+- `appeal_guidance` (per category) + `appeal_system_prompt_template` +
+  `appeal_grounding_fields` — stage 3's per-category argument guidance, the
+  system-prompt template (filled in via `appeal_system_prompt(category)`),
+  and which extracted fields the drafted letter is checked against for
+  grounding.
+
+What deliberately does **not** vary per profile: the six
+`CLASSIFICATION_CATEGORIES` in `db/models.py`
+(`coding_error`/`missing_information`/`medical_necessity`/`timely_filing`/
+`eligibility`/`duplicate_claim`) and the classification tool's JSON schema
+(`classify.py`'s `CLASSIFICATION_TOOL`) are shared across every profile —
+they're genuine root-cause buckets for any healthcare claim denial, not
+eye-care- or DME-specific, so a new profile should adjust the CARC-code
+guide and appeal guidance text, not invent new categories.
+
+`backend/profiles/__init__.py` registers each company's `PROFILE` in a
+`PROFILES` dict and exposes `get_profile(source_company)`. `pipeline/run.py`
+resolves the profile once per denial (`get_profile(denial.source_company)`)
+and passes it into `extract_denial()`, `classify_denial()`, and
+`draft_appeal()`, which use it to build their tool schema/prompts instead of
+referencing hardcoded module-level constants.
+
+### Adding a third company profile
+
+1. Create `backend/profiles/<new_company_key>.py`, using
+   `comprehensive_eyecare_partners.py` or `reliable_medical_dme.py` as a
+   template: define `EXTRACTION_TOOL`, `EXTRACTION_SYSTEM_PROMPT`,
+   `CLASSIFICATION_SYSTEM_PROMPT_INTRO` + `CATEGORY_GUIDE`, and
+   `APPEAL_GUIDANCE` + `APPEAL_SYSTEM_PROMPT_TEMPLATE`, then build a
+   module-level `PROFILE = CompanyProfile(...)`.
+2. Register it in `PROFILES` in `backend/profiles/__init__.py`.
+3. Add a synthetic denial dataset under `backend/data/` (a generator script
+   following `generate_synthetic_data_reliable_medical.py`'s pattern is the
+   easiest way to get varied, non-mail-merged letters), with
+   `source_company` matching the new profile's `key` exactly.
+4. Seed it: `python backend/db/seed.py backend/data/denials_<new_company>.json`.
+
+Nothing in `pipeline/*.py` needs to change — extraction/classification/
+appeal-drafting all resolve their behavior from the `CompanyProfile` at
+runtime.
+
+### Running the pipeline against a specific profile
+
+```bash
+cd backend
+python -m pipeline.run --all --source-company reliable_medical
+python -m pipeline.run --all --source-company comprehensive_eyecare_partners
+python -m pipeline.run --all   # every source_company's status="new" denials
+python -m pipeline.run --denial-id <uuid>   # single denial; profile is
+                                             # resolved automatically from
+                                             # that denial's source_company
+```
+
+### Reliable Medical (DME) dataset
+
+`backend/data/denials_reliable_medical.json` — 14 synthetic denial letters
+(`source_company = "reliable_medical"`), generated by
+`generate_synthetic_data_reliable_medical.py` (deterministic, fixed seed,
+same varied-prose approach as the CEP generator: terse EOB-style vs.
+narrative manual-review letters, randomly assigned). Category distribution:
+`coding_error` (3), `missing_information` (3), `medical_necessity` (2),
+`timely_filing` (2), `eligibility` (2), `duplicate_claim` (2). Equipment
+types are varied across the set: manual and power wheelchairs, CPAP/BiPAP
+devices, a semi-electric hospital bed, a custom ankle-foot orthosis, and a
+microprocessor-knee lower-limb prosthesis. CARC codes are the same
+verified, X12-maintained codes used in the CEP dataset (CARCs are generic
+across specialties, not eye-care- or DME-specific) — re-verified against
+x12.org/codes for this phase. HCPCS Level II equipment codes (K0823, E1130,
+E0601, E0470, E0260, L1960, L5856) were verified against
+AAPC/CMS-coding-reference sources.
+
+### Verification
+
+Ran the refactored pipeline for real against the Anthropic API for both
+profiles: all 14 Reliable Medical denials (12 reached `appeal_drafted`, 2
+correctly routed to `needs_review` on low classification confidence — the
+existing 0.7 threshold behavior, unchanged), and a 3-denial CEP spot-check
+(re-run through the refactored code) confirmed extraction/classification/
+appeal output is unchanged in character from before the refactor — eye-care
+CPT/diagnosis language, no DME terms. The DME outputs were checked for the
+reverse: `extracted_fields` show `hcpcs_code`/`equipment_type`/
+`lmn_reference_number` (never `cpt_code`), and drafted appeals cite HCPCS
+codes, equipment type, and LMN/CMN documentation rather than eye-care
+language — confirming the profile switch actually changes model behavior
+rather than the DME data just flowing through CEP-flavored prompts.
 
 ## What's next (not built yet)
 

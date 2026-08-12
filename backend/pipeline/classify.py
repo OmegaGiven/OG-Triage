@@ -7,6 +7,13 @@ Same structured-output approach as extract.py: a forced tool-use call with
 category outside the six valid values, so there's no freeform-text
 parsing/validation step that could silently accept a typo'd or invented
 category.
+
+Phase 4: the six categories, and the CLASSIFICATION_TOOL schema built from
+them, stay a single shared definition across every company profile -- they
+are genuine root-cause buckets for any healthcare claim denial, not
+eye-care- or DME-specific (see profiles/base.py's module docstring). Only
+the system prompt (company framing + a profile-specific CARC-code guide)
+varies, via `profiles.CompanyProfile.classification_system_prompt()`.
 """
 
 from __future__ import annotations
@@ -15,6 +22,7 @@ import json
 from dataclasses import dataclass
 
 from db.models import CLASSIFICATION_CATEGORIES, Classification, Denial
+from profiles import CompanyProfile
 
 from .common import (
     ANTHROPIC_MODEL,
@@ -64,39 +72,6 @@ CLASSIFICATION_TOOL = {
     },
 }
 
-# Brief category definitions plus representative CARC codes, so the model
-# has more to go on than the bare category names -- these are not exhaustive
-# CARC lists, just enough to disambiguate the six categories from each other.
-CATEGORY_GUIDE = """
-- coding_error: a billing/coding problem with the claim as submitted --
-  invalid, mutually exclusive, unbundled, or mismatched CPT/HCPCS/ICD-10
-  code, missing or incorrect modifier. Typical CARCs: 4, 11, 16 (when paired
-  with a coding-specific RARC), 97, 234.
-- missing_information: the payer needs additional information or
-  documentation to adjudicate the claim -- missing records, missing referral,
-  incomplete claim data. Typical CARCs: 16 (paired with an informational
-  RARC requesting documentation), 252.
-- medical_necessity: the payer determined the service was not medically
-  necessary, or lacks clinical documentation to support necessity. Typical
-  CARCs: 50, 149, 167.
-- timely_filing: the claim was submitted after the payer's filing deadline.
-  Typical CARC: 29.
-- eligibility: the patient was not eligible or covered on the date of
-  service, or the service is not a covered benefit under the plan. Typical
-  CARCs: 26, 27, 31, 96.
-- duplicate_claim: the payer identified this claim as a duplicate of one
-  already processed. Typical CARC: 18.
-""".strip()
-
-SYSTEM_PROMPT = (
-    "You are a claims-appeals specialist for Comprehensive EyeCare Partners, "
-    "an eye-care MSO. Given a denial letter and the fields already extracted "
-    "from it, classify the denial's root cause into exactly one of the "
-    "following categories, and give a calibrated confidence score -- low "
-    "confidence is a correct and useful answer when the letter is genuinely "
-    "ambiguous; it is not something to avoid.\n\n" + CATEGORY_GUIDE
-)
-
 
 @dataclass
 class StageResult:
@@ -117,11 +92,13 @@ def _build_user_message(denial: Denial, extracted_fields: dict) -> str:
     )
 
 
-def _run_once(client, denial: Denial, extracted_fields: dict) -> StageResult:
+def _run_once(
+    client, denial: Denial, extracted_fields: dict, profile: CompanyProfile
+) -> StageResult:
     response = client.messages.create(
         model=ANTHROPIC_MODEL,
         max_tokens=512,
-        system=SYSTEM_PROMPT,
+        system=profile.classification_system_prompt(),
         tools=[CLASSIFICATION_TOOL],
         tool_choice={"type": "tool", "name": CLASSIFICATION_TOOL_NAME},
         messages=[{"role": "user", "content": _build_user_message(denial, extracted_fields)}],
@@ -160,7 +137,9 @@ def _run_once(client, denial: Denial, extracted_fields: dict) -> StageResult:
     )
 
 
-def classify_denial(db, denial: Denial, extracted_fields: dict) -> StageResult:
+def classify_denial(
+    db, denial: Denial, extracted_fields: dict, profile: CompanyProfile
+) -> StageResult:
     """
     Run classification for one denial, given the fields extraction produced.
     Retries once on a transient or malformed-response failure. Writes a
@@ -173,7 +152,7 @@ def classify_denial(db, denial: Denial, extracted_fields: dict) -> StageResult:
     client = get_client()
     try:
         result = call_with_retry(
-            lambda: _run_once(client, denial, extracted_fields),
+            lambda: _run_once(client, denial, extracted_fields, profile),
             description=f"classify[{denial.id}]",
         )
     except PipelineStageError as exc:

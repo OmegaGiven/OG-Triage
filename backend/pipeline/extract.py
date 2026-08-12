@@ -9,6 +9,11 @@ is well-formed. The "verification reflex" this buys: a malformed response
 becomes a missing/empty tool_use block or an absent required field, both of
 which we check for explicitly and retry on, rather than a JSON parse
 exception (or worse, silently-wrong data) buried downstream.
+
+Phase 4: the extraction tool schema and system prompt are no longer
+hardcoded here -- they come from a `profiles.CompanyProfile`, resolved by
+the caller (pipeline.run) from `denial.source_company`, so this module
+drives extraction for any registered company profile identically.
 """
 
 from __future__ import annotations
@@ -17,6 +22,7 @@ import json
 from dataclasses import dataclass
 
 from db.models import Denial, Extraction
+from profiles import CompanyProfile
 
 from .common import (
     ANTHROPIC_MODEL,
@@ -25,117 +31,6 @@ from .common import (
     call_with_retry,
     get_client,
     record_token_usage,
-)
-
-EXTRACTION_TOOL_NAME = "record_extraction"
-
-EXTRACTION_TOOL = {
-    "name": EXTRACTION_TOOL_NAME,
-    "description": (
-        "Record the structured fields extracted from an insurance claim "
-        "denial letter. Only include values that are explicitly stated in "
-        "the letter -- never infer, guess, or fabricate a value that isn't "
-        "present in the text."
-    ),
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "patient_ref": {
-                "type": "string",
-                "description": "Patient reference/ID as stated in the letter (e.g. 'PT-107231').",
-            },
-            "claim_ref": {
-                "type": "string",
-                "description": "The payer's claim number for this denial (e.g. 'CLM-6123212').",
-            },
-            "date_of_service": {
-                "type": "string",
-                "description": "Date of service, normalized to YYYY-MM-DD.",
-            },
-            "billed_amount": {
-                "type": "number",
-                "description": "Billed amount in US dollars as a plain number, no currency symbol or commas.",
-            },
-            "cpt_code": {
-                "type": "string",
-                "description": "CPT procedure code, digits only (e.g. '67028').",
-            },
-            "cpt_description": {
-                "type": "string",
-                "description": "The procedure description accompanying the CPT code, if the letter states one.",
-            },
-            "diagnosis_code": {
-                "type": "string",
-                "description": "ICD-10 diagnosis code exactly as written (e.g. 'H35.3212').",
-            },
-            "diagnosis_description": {
-                "type": "string",
-                "description": "The diagnosis description accompanying the ICD-10 code, if the letter states one.",
-            },
-            "physician_name": {
-                "type": "string",
-                "description": "Treating physician's name including credentials (e.g. 'Dr. Amara Delgado, MD').",
-            },
-            "physician_npi": {
-                "type": "string",
-                "description": "Treating physician's NPI number, digits only.",
-            },
-            "payer_name": {
-                "type": "string",
-                "description": "Name of the insurance payer that issued the denial letter.",
-            },
-            "carc_code": {
-                "type": "string",
-                "description": "Claim Adjustment Reason Code number, digits only (e.g. '29').",
-            },
-            "carc_description": {
-                "type": "string",
-                "description": "The CARC's description text as stated in the letter, if given.",
-            },
-            "rarc_code": {
-                "type": "string",
-                "description": (
-                    "Remittance Advice Remark Code, if one is cited in the letter "
-                    "(e.g. 'N211'). Omit this property entirely if no RARC is present."
-                ),
-            },
-            "rarc_description": {
-                "type": "string",
-                "description": "The RARC's description text, if given. Omit if there is no RARC.",
-            },
-            "prior_auth_number": {
-                "type": "string",
-                "description": (
-                    "Prior authorization number, ONLY if the letter references one. "
-                    "Omit this property entirely if no prior authorization is mentioned."
-                ),
-            },
-        },
-        "required": [
-            "patient_ref",
-            "claim_ref",
-            "date_of_service",
-            "billed_amount",
-            "cpt_code",
-            "diagnosis_code",
-            "physician_name",
-            "physician_npi",
-            "payer_name",
-            "carc_code",
-        ],
-        "additionalProperties": False,
-    },
-}
-
-REQUIRED_FIELDS = tuple(EXTRACTION_TOOL["input_schema"]["required"])
-
-SYSTEM_PROMPT = (
-    "You are a meticulous medical billing/coding assistant for Comprehensive "
-    "EyeCare Partners, an eye-care multi-specialty organization (MSO). You "
-    "extract structured data from insurance claim denial letters with zero "
-    "tolerance for fabrication: every field you report must be traceable to "
-    "an exact phrase in the letter. If a field genuinely is not present in "
-    "the letter, leave it out of your tool call rather than guessing at it."
 )
 
 
@@ -149,19 +44,20 @@ class StageResult:
     output_tokens: int
 
 
-def _run_once(client, denial: Denial) -> StageResult:
+def _run_once(client, denial: Denial, profile: CompanyProfile) -> StageResult:
+    tool_name = profile.extraction_tool_name
     response = client.messages.create(
         model=ANTHROPIC_MODEL,
         max_tokens=1024,
-        system=SYSTEM_PROMPT,
-        tools=[EXTRACTION_TOOL],
-        tool_choice={"type": "tool", "name": EXTRACTION_TOOL_NAME},
+        system=profile.extraction_system_prompt,
+        tools=[profile.extraction_tool],
+        tool_choice={"type": "tool", "name": tool_name},
         messages=[
             {
                 "role": "user",
                 "content": (
                     f"Extract the structured fields from this denial letter using "
-                    f"the {EXTRACTION_TOOL_NAME} tool.\n\n---\n\n{denial.raw_text}"
+                    f"the {tool_name} tool.\n\n---\n\n{denial.raw_text}"
                 ),
             }
         ],
@@ -175,15 +71,17 @@ def _run_once(client, denial: Denial) -> StageResult:
     output_tokens = response.usage.output_tokens
 
     tool_block = next((b for b in response.content if b.type == "tool_use"), None)
-    if tool_block is None or tool_block.name != EXTRACTION_TOOL_NAME:
+    if tool_block is None or tool_block.name != tool_name:
         raise PipelineStageError(
-            f"expected a '{EXTRACTION_TOOL_NAME}' tool_use block, got "
+            f"expected a '{tool_name}' tool_use block, got "
             f"stop_reason={response.stop_reason!r} "
             f"content_types={[b.type for b in response.content]!r}"
         )
 
     data = tool_block.input
-    missing = [f for f in REQUIRED_FIELDS if f not in data or data[f] in (None, "")]
+    missing = [
+        f for f in profile.extraction_required_fields if f not in data or data[f] in (None, "")
+    ]
     if missing:
         raise PipelineStageError(f"tool call missing required field(s): {missing}")
 
@@ -197,7 +95,7 @@ def _run_once(client, denial: Denial) -> StageResult:
     )
 
 
-def extract_denial(db, denial: Denial) -> StageResult:
+def extract_denial(db, denial: Denial, profile: CompanyProfile) -> StageResult:
     """
     Run extraction for one denial: call Claude (retrying once on a transient
     or malformed-response failure), write the extractions audit row --
@@ -209,7 +107,7 @@ def extract_denial(db, denial: Denial) -> StageResult:
     client = get_client()
     try:
         result = call_with_retry(
-            lambda: _run_once(client, denial), description=f"extract[{denial.id}]"
+            lambda: _run_once(client, denial, profile), description=f"extract[{denial.id}]"
         )
     except PipelineStageError as exc:
         # Audit trail for the failure itself: extracted_fields and
