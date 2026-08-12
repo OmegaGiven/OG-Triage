@@ -1,22 +1,31 @@
 # Gauge AI Automations — Claims Denial Triage + Appeal Drafting
 
-**Status: Phase 1 only.** This repo will eventually hold a pipeline that ingests
-insurance claim-denial letters, extracts structured fields, classifies the
-denial reason, and drafts an appeal letter, with a Postgres-backed audit
-trail and a React/TypeScript review UI. **None of that is built yet.** What
-exists today is the foundation the rest of the build sits on:
+**Status: Phase 1-3 done.** This repo holds a pipeline that ingests insurance
+claim-denial letters, extracts structured fields, classifies the denial
+reason, and drafts an appeal letter, with a Postgres-backed audit trail and a
+deterministic eval/regression harness. A React/TypeScript review UI is not
+built yet.
 
-- The Postgres schema (`denials`, `extractions`, `classifications`,
-  `appeals`, `corrections`, `eval_runs`, `token_usage`), defined as
-  SQLAlchemy models with an Alembic migration.
-- A 48-record synthetic dataset of realistic ophthalmology claim-denial
-  letters for a fictional company, "Comprehensive EyeCare Partners," plus a
-  24-record labeled subset for regression-testing a future eval harness.
-- A seed script to load the synthetic dataset into Postgres.
+- **Phase 1** — the Postgres schema (`denials`, `extractions`,
+  `classifications`, `appeals`, `corrections`, `eval_runs`, `token_usage`),
+  defined as SQLAlchemy models with an Alembic migration; a 48-record
+  synthetic dataset of realistic ophthalmology claim-denial letters for a
+  fictional company, "Comprehensive EyeCare Partners," plus a 24-record
+  labeled subset for regression-testing the eval harness; a seed script to
+  load the synthetic dataset into Postgres.
+- **Phase 2** — `backend/pipeline/` (`extract.py`, `classify.py`,
+  `draft_appeal.py`, `run.py`, `common.py`): a real Anthropic-API pipeline
+  that takes a denial from `status="new"` through extraction, classification,
+  and (confidence permitting) appeal drafting, with per-call token/cost
+  accounting (`token_usage`) and a confidence-gated `needs_review` routing
+  path. Runnable as `python -m pipeline.run --all` from `backend/`.
+- **Phase 3** — `backend/eval/` (`score.py`, `run_eval.py`): a deterministic
+  eval harness that scores the pipeline's persisted results against
+  `eval_labeled.json`'s ground truth and writes a regression-checked
+  `eval_runs` row. See "Phase 3 — Evaluation" below.
 
-There is no FastAPI application, no LLM pipeline, and no frontend yet. The
-`backend/requirements.txt` includes `fastapi`, `anthropic`, and `pydantic`
-because those are pinned dependencies for the next phase, not because
+The `backend/requirements.txt` includes `fastapi` and `pydantic` because
+those are pinned dependencies for a future API/frontend phase, not because
 anything currently uses them.
 
 ## Repo layout
@@ -133,8 +142,90 @@ and end up with both old and new rows in the database unless you truncate
   actual generated values (claim number, CPT code, physician NPI, etc.) —
   not generic boilerplate.
 
+## Phase 3 — Evaluation
+
+`backend/eval/` is a deterministic regression harness for the Phase 2
+pipeline. It makes **no LLM calls** — it only reads what the pipeline already
+wrote to Postgres and compares it to `backend/data/eval_labeled.json`'s
+hand-labeled ground truth, so it's cheap and safe to re-run on every change.
+
+### Running it
+
+```bash
+cd backend
+python -m eval.run_eval
+```
+
+This scores the 24 labeled denials against their existing DB rows
+(`extractions`, `classifications`, `appeals` — it does **not** re-run the
+pipeline; if a labeled denial's rows are genuinely missing, that's reported
+as a data issue, not silently re-processed), prints the score breakdown,
+writes a new `eval_runs` row, and compares against the most recent prior
+`eval_runs` row to flag a regression. `python -m eval.score` runs just the
+scoring step and dumps the full JSON breakdown to stdout, without touching
+the database.
+
+### The three scoring dimensions
+
+1. **Classification accuracy** — binary, per denial: does
+   `classifications.category` exactly match `eval_labeled.json`'s
+   `ground_truth_category`?
+2. **Extraction accuracy** — binary, per denial: does
+   `extractions.extracted_fields['carc_code']` exactly match
+   `ground_truth_carc_code`? RARC match, and claim_ref/patient_ref sanity
+   checks against values regexed directly out of the denial's own
+   `raw_text` (independent of anything the pipeline produced), are also
+   computed and reported, but only the CARC match feeds the weighted score
+   — see `eval/score.py` for why RARC is reported separately (the synthetic
+   letters never state a RARC code in their `raw_text`, so
+   `ground_truth_rarc_code` isn't something a letter-grounded extractor
+   could ever legitimately recover; scoring it into the same number as CARC
+   would make a correctly-behaving extractor look broken).
+3. **Appeal completeness** — for each denial's `required_appeal_elements`,
+   the harness extracts the literal facts embedded in that requirement's own
+   text (claim/patient/prior-auth refs, CPT/ICD-10/CARC codes, dates, NPIs)
+   and checks each is a substring of the drafted appeal letter. A
+   requirement with no extractable literal (e.g. "must address the timely
+   filing gap directly") is reported separately as "unverifiable" rather
+   than scored pass/fail — the harness deliberately does not use an LLM
+   judge to assess free-form argument quality; that would defeat the point
+   of a cheap, deterministic regression gate. Only denials that reached
+   `appeal_drafted` are scored on this dimension; denials routed to
+   `needs_review` (low classification confidence) have no appeal to check
+   and are reported as a separate count, not folded in as an implicit zero.
+
+The overall score is `0.4 * classification_accuracy + 0.3 * extraction_accuracy
++ 0.3 * appeal_completeness` — classification is weighted highest because a
+wrong category drives the `needs_review` routing decision and the
+category-specific appeal-drafting guidance, so it tends to cascade into
+downstream errors even when extraction and drafting both work correctly. See
+the comment above `WEIGHT_CLASSIFICATION` in `eval/score.py` for the full
+reasoning.
+
+### The `eval_runs` row
+
+Each run inserts one row: `accuracy_score` (the overall weighted score),
+`details` (the full JSON breakdown — per-dimension aggregates and a
+per-denial list with predicted vs. ground truth, missing/unverifiable appeal
+elements, etc.), `git_commit` (`git rev-parse HEAD` at run time, so a score
+is always traceable to the exact code that produced it), and `run_at`.
+
+### Regression threshold
+
+`run_eval.py` compares the new run's `accuracy_score` against the most
+recent prior `eval_runs` row (skipped gracefully if there isn't one — e.g.
+the very first run) and flags a regression if the score dropped by more than
+**5 percentage points**. With only 24 labeled examples, a single denial
+flipping from correct to incorrect on classification alone already moves the
+weighted score by ~1.7pp, so the threshold needs to sit above that
+single-flip noise floor while still catching a real regression (e.g. a
+prompt change that breaks a whole category, typically a double-digit-pp
+move). See the comment above `REGRESSION_THRESHOLD_PP` in `eval/run_eval.py`
+for the full reasoning — this is a starting point tuned by judgment, not a
+statistically derived value, and the right long-term fix if it proves noisy
+is a larger labeled set, not just retuning the number.
+
 ## What's next (not built yet)
 
-FastAPI routes, the extraction/classification/appeal-drafting LLM pipeline,
-the eval harness that scores against `eval_labeled.json`, and the React
+FastAPI routes to expose the pipeline and eval results, and the React
 frontend.
