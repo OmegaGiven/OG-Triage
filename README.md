@@ -358,7 +358,89 @@ codes, equipment type, and LMN/CMN documentation rather than eye-care
 language — confirming the profile switch actually changes model behavior
 rather than the DME data just flowing through CEP-flavored prompts.
 
+## Phase 5 — API
+
+`backend/api/` + `backend/main.py`: a FastAPI app exposing the Phase 1-4
+pipeline, eval harness, company profiles, and token-usage accounting over
+REST. This is the layer the (not-yet-built) React frontend consumes.
+
+### Running it
+
+```bash
+cd backend
+source ../.venv/bin/activate   # or wherever you created the venv
+uvicorn main:app --reload
+```
+
+Serves on `http://127.0.0.1:8000` by default. Interactive docs at
+`/docs` (Swagger UI) and `/openapi.json`. CORS is configured for a local
+Vite React+TS dev server (`http://localhost:5173` / `http://127.0.0.1:5173`).
+
+### Structure
+
+```
+backend/
+  main.py               # FastAPI() app instance, CORS, router mounting
+  api/
+    deps.py              # get_db() -- per-request SQLAlchemy session
+    schemas.py            # Pydantic request/response models
+    routes/
+      health.py            # GET /api/health
+      denials.py            # denial list/detail, process, review actions
+      eval.py                # eval-run history + trigger
+      profiles.py             # company profile listing
+      usage.py                  # token/cost usage reporting
+```
+
+Pydantic models in `api/schemas.py` are deliberately separate from the
+SQLAlchemy models in `db/models.py` — they describe the wire contract with
+the frontend (e.g. list-view booleans like `has_classification`/`has_appeal`
+that don't exist as DB columns), not the DB schema.
+
+### Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/health` | Liveness + DB connectivity check. |
+| GET | `/api/denials` | Paginated denial worklist; filter by `source_company`, `status`. |
+| GET | `/api/denials/{id}` | Full detail: raw_text, extraction, classification, appeal, corrections — one call, not four. |
+| POST | `/api/denials/{id}/process` | Runs the real extract→classify→draft_appeal pipeline for this one denial on-demand (real Anthropic API cost). |
+| POST | `/api/denials/{id}/appeal/status` | Human review action: update an appeal's status (`approved`/`rejected`/`sent`) + reviewer. |
+| POST | `/api/denials/{id}/corrections` | Logs a human correction to an AI-produced field — the compliance audit-trail feature; writes a `corrections` row, does not mutate the original AI output. |
+| GET | `/api/eval/runs` | Eval-run history, newest first (for the regression-tracking chart). |
+| POST | `/api/eval/run` | Triggers a new eval run against current DB contents (no LLM calls — see Phase 3) and writes a new `eval_runs` row. |
+| GET | `/api/profiles` | Lists registered company profiles (`key`, `display_name`) — backs the frontend's profile switcher. |
+| GET | `/api/usage` | Token/cost summary, optional `source_company` filter: totals, breakdown by pipeline stage, and a by-day time series. |
+
+### Verification
+
+Started the server for real (`uvicorn main:app`) against the live Postgres
+instance with existing seeded/processed data (48 CEP + 14 DME denials, one
+prior `eval_runs` row) and exercised every endpoint with `curl`:
+
+- `GET /api/health` → `{"status":"ok","database":"ok"}`.
+- `GET /api/denials?source_company=comprehensive_eyecare_partners` → real
+  denials with correct `has_classification`/`has_appeal` flags.
+- `GET /api/denials/{id}` → full detail with populated extraction (all
+  extracted fields + model/prompt version), classification (category +
+  confidence), and appeal (full draft text) for a real denial.
+- `POST /api/denials/{id}/corrections` → 201 with the new row, then
+  independently re-queried via a direct DB script (not just the HTTP
+  response) to confirm the row was actually persisted.
+- `POST /api/denials/{id}/appeal/status` → updated `status`/`reviewer`/
+  `reviewed_at`, confirmed via the same direct DB re-query.
+- `POST /api/denials/{id}/process` → real pipeline run against the
+  Anthropic API, returned `appeal_drafted`; a bogus id correctly 404s.
+- `POST /api/eval/run` → wrote a new `eval_runs` row (`id=2`,
+  `accuracy_score=0.95`, tied to the current git commit); `GET
+  /api/eval/runs` showed both rows, newest first.
+- `GET /api/profiles` → both `comprehensive_eyecare_partners` and
+  `reliable_medical`.
+- `GET /api/usage` and the `source_company`-filtered variants → totals
+  cross-checked exactly against a direct DB aggregate query run beforehand:
+  CEP `$2.234616`, DME `$0.682545` (matches known prior-phase totals).
+- `GET /docs` and `/openapi.json` both return 200.
+
 ## What's next (not built yet)
 
-FastAPI routes to expose the pipeline and eval results, and the React
-frontend.
+The React frontend, consuming this API.
