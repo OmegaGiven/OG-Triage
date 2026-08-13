@@ -11,7 +11,7 @@ function TopNav() {
   const onProfiles = location.pathname.startsWith("/profiles");
   return (
     <header className="sticky top-0 z-10 border-b border-ink-200 bg-white/90 backdrop-blur">
-      <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-3.5">
+      <div className="mx-auto flex max-w-[1800px] items-center justify-between px-6 py-3.5">
         <Link to="/" className="flex items-center gap-2.5">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-600 text-white shadow-sm">
             <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
@@ -62,7 +62,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-ink-50">
       <TopNav />
-      <main className="mx-auto max-w-7xl px-6 py-8">
+      <main className="mx-auto max-w-[1800px] px-6 py-8">
         <Routes>
           <Route path="/" element={<Navigate to="/denials" replace />} />
           <Route path="/denials" element={<QueueView />} />

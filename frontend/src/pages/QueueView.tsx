@@ -14,7 +14,7 @@ function formatDate(iso: string): string {
   });
 }
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 40;
 
 export function QueueView() {
   const navigate = useNavigate();
