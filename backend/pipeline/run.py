@@ -24,7 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from db.models import CLASSIFICATION_CATEGORIES, Classification, Correction, Denial, Extraction  # noqa: E402
+from db.models import CLASSIFICATION_CATEGORIES, AuditEvent, Classification, Denial, Extraction  # noqa: E402
 from db.session import SessionLocal  # noqa: E402
 from profiles import get_profile  # noqa: E402
 
@@ -185,12 +185,12 @@ def draft_appeal_only(denial_id: uuid.UUID | str) -> str:
         )
 
         correction = (
-            db.query(Correction)
+            db.query(AuditEvent)
             .filter(
-                Correction.denial_id == denial.id,
-                Correction.field_corrected == "classification.category",
+                AuditEvent.denial_id == denial.id,
+                AuditEvent.field_corrected == "classification.category",
             )
-            .order_by(Correction.corrected_at.desc())
+            .order_by(AuditEvent.corrected_at.desc())
             .first()
         )
         if correction is not None:

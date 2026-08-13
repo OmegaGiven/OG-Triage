@@ -1,5 +1,5 @@
 """Denial listing/detail, on-demand pipeline processing, appeal review, and
-the corrections audit-trail endpoint."""
+the unified audit-event (corrections + appeal-review decisions) trail."""
 
 from __future__ import annotations
 
@@ -14,15 +14,15 @@ from api.deps import get_db
 from api.schemas import (
     AppealOut,
     AppealStatusUpdateRequest,
+    AuditEventOut,
     CorrectionCreateRequest,
-    CorrectionOut,
     DenialCreateRequest,
     DenialDetail,
     DenialListItem,
     DenialListResponse,
     ProcessResponse,
 )
-from db.models import Appeal, Classification, Correction, Denial, Extraction
+from db.models import Appeal, AuditEvent, Classification, Denial, Extraction
 from profiles import PROFILES
 
 router = APIRouter(prefix="/api/denials", tags=["denials"])
@@ -141,10 +141,10 @@ def get_denial_detail(denial_id: uuid.UUID, db: Session = Depends(get_db)) -> De
         .order_by(Appeal.created_at.desc())
         .first()
     )
-    corrections = (
-        db.query(Correction)
-        .filter(Correction.denial_id == denial_id)
-        .order_by(Correction.corrected_at.desc())
+    audit_events = (
+        db.query(AuditEvent)
+        .filter(AuditEvent.denial_id == denial_id)
+        .order_by(AuditEvent.corrected_at.desc())
         .all()
     )
 
@@ -160,7 +160,7 @@ def get_denial_detail(denial_id: uuid.UUID, db: Session = Depends(get_db)) -> De
         extraction=extraction,
         classification=classification,
         appeal=appeal,
-        corrections=[CorrectionOut.model_validate(c) for c in corrections],
+        audit_events=[AuditEventOut.model_validate(e) for e in audit_events],
     )
 
 
@@ -222,9 +222,14 @@ def update_appeal_status(
     if appeal is None:
         raise HTTPException(status_code=404, detail=f"no appeal drafted yet for denial_id={denial_id}")
 
+    previous_status = appeal.status
+    reviewed_at = datetime.now(timezone.utc)
+
+    # Mutable "current state" -- still updated in place, same as before, so
+    # the detail view's appeal panel keeps showing "last reviewed by X on Y".
     appeal.status = body.status
     appeal.reviewer = body.reviewer
-    appeal.reviewed_at = datetime.now(timezone.utc)
+    appeal.reviewed_at = reviewed_at
     # Mirror the review decision onto the denial's own status so the queue
     # list (which only shows denials.status, not the nested appeal) reflects
     # it too -- "approved"/"rejected" are valid denial_status enum values for
@@ -232,15 +237,33 @@ def update_appeal_status(
     # state of an already-approved appeal), so it doesn't touch denial.status.
     if body.status in ("approved", "rejected"):
         denial.status = body.status
+
+    # Permanent, append-only audit record of this decision -- unlike the
+    # appeal row above, this is never updated or deleted by a later review,
+    # reprocess, or re-review. This is what makes "who approved this and
+    # when" recoverable even after the appeal row itself is later overwritten
+    # (re-review) or superseded (reprocess creates a new Appeal row).
+    audit_event = AuditEvent(
+        denial_id=denial_id,
+        appeal_id=appeal.id,
+        event_type="appeal_review",
+        field_corrected="appeal.status",
+        old_value=previous_status,
+        new_value=body.status,
+        corrected_by=body.reviewer,
+        corrected_at=reviewed_at,
+    )
+    db.add(audit_event)
+
     db.commit()
     db.refresh(appeal)
     return appeal
 
 
-@router.post("/{denial_id}/corrections", response_model=CorrectionOut, status_code=201)
+@router.post("/{denial_id}/corrections", response_model=AuditEventOut, status_code=201)
 def create_correction(
     denial_id: uuid.UUID, body: CorrectionCreateRequest, db: Session = Depends(get_db)
-) -> CorrectionOut:
+) -> AuditEventOut:
     """Logs a human correction to an AI-produced field -- the compliance
     audit-trail feature. Does not mutate the corrected field itself
     (extraction/classification/appeal rows are left as the AI produced
@@ -257,8 +280,9 @@ def create_correction(
     draft_appeal_only's docstring for the full rationale."""
     _get_denial_or_404(db, denial_id)
 
-    correction = Correction(
+    correction = AuditEvent(
         denial_id=denial_id,
+        event_type="correction",
         field_corrected=body.field_corrected,
         old_value=body.old_value,
         new_value=body.new_value,

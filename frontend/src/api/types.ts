@@ -71,8 +71,18 @@ export interface AppealOut {
   created_at: string;
 }
 
-export interface CorrectionOut {
+export const AUDIT_EVENT_TYPES = ["correction", "appeal_review"] as const;
+export type AuditEventType = (typeof AUDIT_EVENT_TYPES)[number];
+
+/** One row of the unified, immutable audit-event log -- either a human
+ * correction to an AI-produced field, or an appeal approve/reject/sent
+ * review decision (see event_type). For event_type="appeal_review",
+ * field_corrected is always "appeal.status", old_value/new_value are the
+ * previous/new appeal status, and corrected_by is the reviewer. */
+export interface AuditEventOut {
   id: number;
+  event_type: AuditEventType;
+  appeal_id: number | null;
   field_corrected: string;
   old_value: string;
   new_value: string;
@@ -80,6 +90,9 @@ export interface CorrectionOut {
   corrected_at: string;
   notes: string | null;
 }
+
+/** @deprecated use AuditEventOut */
+export type CorrectionOut = AuditEventOut;
 
 export interface DenialDetail {
   id: string;
@@ -93,7 +106,7 @@ export interface DenialDetail {
   extraction: ExtractionOut | null;
   classification: ClassificationOut | null;
   appeal: AppealOut | null;
-  corrections: CorrectionOut[];
+  audit_events: AuditEventOut[];
 }
 
 export interface ProcessResponse {

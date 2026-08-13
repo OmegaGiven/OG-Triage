@@ -1,9 +1,9 @@
 import type {
   AppealOut,
   AppealStatusUpdateRequest,
+  AuditEventOut,
   ConfidenceDistributionResponse,
   CorrectionCreateRequest,
-  CorrectionOut,
   DemoResetOut,
   DenialCreateRequest,
   DenialDetail,
@@ -98,7 +98,7 @@ export const api = {
     }),
 
   createCorrection: (id: string, body: CorrectionCreateRequest) =>
-    request<CorrectionOut>(`/denials/${id}/corrections`, {
+    request<AuditEventOut>(`/denials/${id}/corrections`, {
       method: "POST",
       body: JSON.stringify(body),
     }),

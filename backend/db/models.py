@@ -8,7 +8,9 @@ denials         - one row per ingested denial letter (the "root" entity;
 extractions     - structured fields pulled from a denial by the LLM extraction step
 classifications - denial-reason category assigned by the LLM classification step
 appeals         - drafted appeal letters and their human-review status
-corrections     - audit trail of human edits to any AI-produced field
+corrections     - immutable append-only audit-event log: human edits to any
+                  AI-produced field, AND appeal approve/reject/sent review
+                  decisions (event_type distinguishes the two; see AuditEvent)
 eval_runs       - results of a later phase's eval harness, tied to a git commit
 token_usage     - per-call LLM token/cost accounting, for cost tracking
 
@@ -161,8 +163,33 @@ class Appeal(Base):
     __table_args__ = (Index("ix_appeals_denial_id", "denial_id"),)
 
 
-class Correction(Base):
-    """Audit trail: every human correction to an AI-produced field, for compliance review."""
+AUDIT_EVENT_TYPES = ("correction", "appeal_review")
+
+
+class AuditEvent(Base):
+    """Immutable, append-only compliance audit trail: every human action worth a
+    permanent record on a denial -- a correction to an AI-produced field, or an
+    appeal approve/reject/sent review decision. Rows are INSERT-only; nothing
+    here is ever updated or deleted in normal operation, which is the whole
+    point (see `Appeal.status`/`reviewer`/`reviewed_at`, which DO get
+    overwritten in place to show "current state" -- this table is the
+    permanent history those mutable fields don't preserve).
+
+    One wider table with two event shapes, distinguished by `event_type`,
+    rather than two separate tables, because the shapes turned out to share
+    the same four columns cleanly:
+      - event_type="correction": field_corrected/old_value/new_value describe
+        what changed (e.g. "classification.category"), corrected_by is who
+        made the fix. Unchanged from the original `corrections` table.
+      - event_type="appeal_review": field_corrected is always "appeal.status",
+        old_value/new_value are the previous/new appeal status
+        (draft -> approved, etc.), corrected_by is the reviewer, and
+        `appeal_id` records which Appeal row (there can be more than one per
+        denial after a reprocess) the decision was about.
+    Table name stayed `corrections` (rather than renaming to `audit_events`)
+    to keep the migration that extended it a pure ADD COLUMN, not a rename --
+    see alembic/versions for the migration that added event_type/appeal_id.
+    """
 
     __tablename__ = "corrections"
 
@@ -170,7 +197,21 @@ class Correction(Base):
     denial_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("denials.id", ondelete="CASCADE"), nullable=False
     )
+    event_type: Mapped[str] = mapped_column(
+        Enum(*AUDIT_EVENT_TYPES, name="audit_event_type"),
+        nullable=False,
+        default="correction",
+        server_default="correction",
+    )
+    # Only set for event_type="appeal_review" -- which Appeal row (a denial
+    # can have more than one, after a reprocess) this review decision was
+    # about. SET NULL on appeal delete so the audit row survives even if the
+    # appeal it referenced is ever removed.
+    appeal_id: Mapped[int | None] = mapped_column(
+        ForeignKey("appeals.id", ondelete="SET NULL"), nullable=True
+    )
     # e.g. "classification.category", "appeal.draft_text", "extraction.claim_amount"
+    # for corrections; always "appeal.status" for appeal_review events.
     field_corrected: Mapped[str] = mapped_column(String(128), nullable=False)
     old_value: Mapped[str] = mapped_column(Text, nullable=False)
     new_value: Mapped[str] = mapped_column(Text, nullable=False)
@@ -180,7 +221,15 @@ class Correction(Base):
     )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    __table_args__ = (Index("ix_corrections_denial_id", "denial_id"),)
+    __table_args__ = (
+        Index("ix_corrections_denial_id", "denial_id"),
+        Index("ix_corrections_appeal_id", "appeal_id"),
+        Index("ix_corrections_event_type", "event_type"),
+    )
+
+
+# Backwards-compatible alias: the table/model used to be correction-only.
+Correction = AuditEvent
 
 
 class EvalRun(Base):

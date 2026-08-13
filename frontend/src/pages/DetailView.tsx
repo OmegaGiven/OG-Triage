@@ -309,44 +309,77 @@ export function DetailView() {
         )}
       </div>
 
-      {/* Corrections / audit trail */}
+      {/* Unified audit trail: corrections + appeal-review decisions, one
+          permanent, append-only chronological timeline. */}
       <div className="mt-6 card p-6">
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-ink-500">
-          Correction History
+          Audit History
           <span className="ml-2 rounded-full bg-ink-100 px-2 py-0.5 text-xs font-semibold text-ink-500">
-            {denial.corrections.length}
+            {denial.audit_events.length}
           </span>
         </h2>
-        {denial.corrections.length === 0 ? (
-          <p className="text-sm text-ink-400">No corrections logged for this denial.</p>
+        {denial.audit_events.length === 0 ? (
+          <p className="text-sm text-ink-400">No audit events logged for this denial yet.</p>
         ) : (
           <ul className="divide-y divide-ink-100">
-            {denial.corrections.map((c) => (
-              <li key={c.id} className="py-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-sm font-medium text-ink-800">{c.field_corrected}</span>
-                  <span className="text-xs text-ink-400">
-                    {c.corrected_by} · {formatDateTime(c.corrected_at)}
-                  </span>
-                </div>
-                <div className="mt-1.5 flex flex-wrap items-center gap-2 text-sm">
-                  <span className="rounded bg-status-rejected-bg px-2 py-0.5 text-status-rejected-fg line-through decoration-1">
-                    {c.old_value || "—"}
-                  </span>
-                  <svg className="h-3.5 w-3.5 text-ink-300" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                    <path
-                      fillRule="evenodd"
-                      d="M10.293 3.293a1 1 0 011.414 0l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414-1.414L12.586 9H3a1 1 0 110-2h9.586l-2.293-2.293a1 1 0 010-1.414z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
-                  <span className="rounded bg-status-approved-bg px-2 py-0.5 text-status-approved-fg">
-                    {c.new_value || "—"}
-                  </span>
-                </div>
-                {c.notes && <p className="mt-1.5 text-sm text-ink-500">{c.notes}</p>}
-              </li>
-            ))}
+            {denial.audit_events.map((e) =>
+              e.event_type === "appeal_review" ? (
+                <li key={e.id} className="py-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="inline-flex items-center gap-1.5 text-sm font-medium text-ink-800">
+                      <span className="rounded-[var(--radius-pill)] bg-status-sent-bg px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-status-sent-fg">
+                        Appeal review
+                      </span>
+                      Appeal {e.appeal_id ? `#${e.appeal_id}` : ""}
+                    </span>
+                    <span className="text-xs text-ink-400">
+                      {e.corrected_by} · {formatDateTime(e.corrected_at)}
+                    </span>
+                  </div>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-2 text-sm">
+                    <StatusPill status={e.old_value} />
+                    <svg className="h-3.5 w-3.5 text-ink-300" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                      <path
+                        fillRule="evenodd"
+                        d="M10.293 3.293a1 1 0 011.414 0l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414-1.414L12.586 9H3a1 1 0 110-2h9.586l-2.293-2.293a1 1 0 010-1.414z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
+                    <StatusPill status={e.new_value} />
+                  </div>
+                </li>
+              ) : (
+                <li key={e.id} className="py-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="inline-flex items-center gap-1.5 text-sm font-medium text-ink-800">
+                      <span className="rounded-[var(--radius-pill)] bg-status-classified-bg px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-status-classified-fg">
+                        Correction
+                      </span>
+                      {e.field_corrected}
+                    </span>
+                    <span className="text-xs text-ink-400">
+                      {e.corrected_by} · {formatDateTime(e.corrected_at)}
+                    </span>
+                  </div>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-2 text-sm">
+                    <span className="rounded bg-status-rejected-bg px-2 py-0.5 text-status-rejected-fg line-through decoration-1">
+                      {e.old_value || "—"}
+                    </span>
+                    <svg className="h-3.5 w-3.5 text-ink-300" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                      <path
+                        fillRule="evenodd"
+                        d="M10.293 3.293a1 1 0 011.414 0l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414-1.414L12.586 9H3a1 1 0 110-2h9.586l-2.293-2.293a1 1 0 010-1.414z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
+                    <span className="rounded bg-status-approved-bg px-2 py-0.5 text-status-approved-fg">
+                      {e.new_value || "—"}
+                    </span>
+                  </div>
+                  {e.notes && <p className="mt-1.5 text-sm text-ink-500">{e.notes}</p>}
+                </li>
+              )
+            )}
           </ul>
         )}
       </div>

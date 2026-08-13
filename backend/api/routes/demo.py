@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 
 from api.deps import get_db
 from api.schemas import DemoResetOut
-from db.models import Appeal, Classification, Correction, Denial, Extraction
+from db.models import Appeal, AuditEvent, Classification, Denial, Extraction
 from profiles import PROFILES
 
 router = APIRouter(prefix="/api/demo", tags=["demo (interview case-study tooling, not production)"])
@@ -60,7 +60,7 @@ def reset_sample_denial(source_company: str, db: Session = Depends(get_db)) -> D
             ),
         )
 
-    db.query(Correction).filter(Correction.denial_id == denial.id).delete()
+    db.query(AuditEvent).filter(AuditEvent.denial_id == denial.id).delete()
     db.query(Appeal).filter(Appeal.denial_id == denial.id).delete()
     db.query(Classification).filter(Classification.denial_id == denial.id).delete()
     db.query(Extraction).filter(Extraction.denial_id == denial.id).delete()

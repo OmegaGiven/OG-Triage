@@ -1,6 +1,8 @@
 # Gauge AI Automations — Claims Denial Triage + Appeal Drafting
 
-**Status: Phase 1-10 done, plus manual denial creation and reprocess-from-detail-view.** This repo holds a
+**Status: Phase 1-10 done, plus manual denial creation, reprocess-from-detail-view,
+and a unified immutable audit-event log covering both corrections and appeal-review
+decisions (see "Audit history — a unified, immutable event log" below).** This repo holds a
 pipeline that ingests insurance claim-denial letters, extracts structured
 fields, classifies the denial reason, and drafts an appeal letter, with a
 Postgres-backed audit trail and a deterministic eval/regression harness. The
@@ -12,7 +14,10 @@ demo, and a "New Denial" flow for pasting in a real denial letter live (see
 "Manual denial creation" below).
 
 - **Phase 1** — the Postgres schema (`denials`, `extractions`,
-  `classifications`, `appeals`, `corrections`, `eval_runs`, `token_usage`),
+  `classifications`, `appeals`, `corrections`, `eval_runs`, `token_usage`; the
+  `corrections` table was later extended into a unified, immutable
+  audit-event log covering both corrections and appeal-review decisions —
+  see "Audit history" below),
   defined as SQLAlchemy models with an Alembic migration; a 48-record
   synthetic dataset of realistic ophthalmology claim-denial letters for a
   fictional company, "Comprehensive EyeCare Partners," plus a 24-record
@@ -459,11 +464,11 @@ that don't exist as DB columns), not the DB schema.
 |---|---|---|
 | GET | `/api/health` | Liveness + DB connectivity check. |
 | GET | `/api/denials` | Paginated denial worklist; filter by `source_company`, `status`. |
-| GET | `/api/denials/{id}` | Full detail: raw_text, extraction, classification, appeal, corrections — one call, not four. |
+| GET | `/api/denials/{id}` | Full detail: raw_text, extraction, classification, appeal, `audit_events` — one call, not four. See "Audit history — a unified, immutable event log" below for what `audit_events` is. |
 | POST | `/api/denials/{id}/process` | Runs the real extract→classify→draft_appeal pipeline for this one denial on-demand (real Anthropic API cost). |
 | POST | `/api/denials/{id}/appeal/draft` | Runs *only* the appeal-drafting stage against the denial's current extraction + classification — no re-extraction, no re-classification. See "Draft Appeal Letter (detail view)" below for why this exists and how it picks up a human classification correction. |
-| POST | `/api/denials/{id}/appeal/status` | Human review action: update an appeal's status (`approved`/`rejected`/`sent`) + reviewer. |
-| POST | `/api/denials/{id}/corrections` | Logs a human correction to an AI-produced field — the compliance audit-trail feature; writes a `corrections` row, does not mutate the original AI output (with one deliberate exception — see "Draft Appeal Letter (detail view)" below). |
+| POST | `/api/denials/{id}/appeal/status` | Human review action: updates the appeal row's `status`/`reviewer`/`reviewed_at` in place (current-state display) **and** appends a permanent `appeal_review` audit event recording the decision — see "Audit history" below. |
+| POST | `/api/denials/{id}/corrections` | Logs a human correction to an AI-produced field — the compliance audit-trail feature; appends an `event_type="correction"` row to the same unified audit-event log, does not mutate the original AI output (with one deliberate exception — see "Draft Appeal Letter (detail view)" below). |
 | GET | `/api/eval/runs` | Eval-run history, newest first (for the regression-tracking chart). |
 | POST | `/api/eval/run` | Triggers a new eval run against current DB contents (no LLM calls — see Phase 3) and writes a new `eval_runs` row. |
 | GET | `/api/profiles` | Lists registered company profiles (`key`, `display_name`) — backs the frontend's profile switcher. |
@@ -1217,6 +1222,84 @@ and classification too — a second, real LLM call that could easily land on
 a *different* wrong category (or the same original one), overwriting the
 context of the correction the human just made. Reprocessing to fix this
 defeats the point of having made the correction.
+
+### Audit history — a unified, immutable event log
+
+The detail view's "Audit History" section (renamed from "Correction
+History") shows a single chronological timeline mixing two kinds of
+permanent, human-attributed compliance events:
+
+- **corrections** — a human edit to an AI-produced field (unchanged from
+  the original Phase-6 feature).
+- **appeal_review** — an appeal approve/reject/sent decision.
+
+**Schema decision: extended the existing `corrections` table in place,
+rather than adding a second table.** `Appeal.status`/`reviewer`/
+`reviewed_at` already existed as *mutable* "current state" columns on the
+`appeals` row — `update_appeal_status` used to just overwrite them, so if
+an appeal was approved, later reprocessed (a new `Appeal` row, per the
+Reprocess feature), and re-reviewed, the prior reviewer/timestamp was
+gone with no trace. That's the gap this closes. Rather than build a
+parallel `appeal_review_events` table, the fix reuses `corrections`
+because the two event shapes turned out to share the same four columns
+cleanly: a correction's `field_corrected`/`old_value`/`new_value` map
+directly onto an appeal review's "what changed" (`field_corrected` is
+always the literal string `"appeal.status"`, `old_value`/`new_value` are
+the previous/new appeal status), and `corrected_by`/`corrected_at` map
+onto "who reviewed it and when." Two new columns were added:
+`event_type` (`"correction"` | `"appeal_review"`, defaults to
+`"correction"`) to distinguish the two shapes for the frontend, and a
+nullable `appeal_id` FK (`SET NULL` on delete) so an `appeal_review` event
+records *which* `Appeal` row it was about — useful once a denial has more
+than one, post-reprocess. The SQLAlchemy model class was renamed
+`Correction` → `AuditEvent` (`backend/db/models.py`) to reflect what it
+now holds, though the underlying table is still named `corrections` (kept
+the migration a pure `ADD COLUMN`, not a rename) — a `Correction =
+AuditEvent` alias is kept for anything that still imports the old name.
+Migration: `backend/alembic/versions/c96f0c026d93_audit_events.py`.
+
+**What actually changed at the row level:** `update_appeal_status`
+(`backend/api/routes/denials.py`) still updates `appeal.status`/
+`reviewer`/`reviewed_at` in place — the detail view's "Last reviewed by…"
+line under the appeal panel still needs that "current state" — but now
+*also* inserts a new `AuditEvent(event_type="appeal_review", ...)` row.
+That insert is never updated or deleted by a later action; re-reviewing
+the same appeal (or reprocessing then re-reviewing) overwrites the
+`appeals` row but always appends, never touches, prior `corrections`
+rows. Verified directly: approving an appeal, then hitting
+`POST /appeal/status` again with a different `status`/`reviewer`, leaves
+**both** `appeal_review` rows in `corrections` — only the mutable
+`appeals` row shows the latest decision.
+
+**Backfill:** the migration backfills `appeal_review` events for any
+`appeals` rows that already had `reviewer`/`reviewed_at` set from testing
+before this feature existed (`old_value` is assumed `"draft"`, since prior
+per-decision history was never recorded). This can only recover the
+*current* state each `appeals` row happened to have at migration time — if
+an appeal had been reviewed more than once before this migration, only the
+most recent decision survived to backfill from; any earlier, overwritten
+review is genuinely gone. Only audit events from this migration forward
+are guaranteed complete and immutable.
+
+**API shape:** `GET /api/denials/{id}` was extended (not a new endpoint —
+it already embedded corrections, so extending the existing response kept
+the API surface flat) to return `audit_events: AuditEventOut[]` instead of
+`corrections: CorrectionOut[]`, ordered newest-first by `corrected_at`.
+Each `AuditEventOut` carries `event_type`, `appeal_id`, and the shared
+`field_corrected`/`old_value`/`new_value`/`corrected_by`/`corrected_at`/
+`notes` columns — enough for the frontend to render either shape without a
+second request. `POST /api/denials/{id}/corrections` is unchanged from the
+caller's perspective; it now sets `event_type="correction"` under the
+hood.
+
+**Frontend:** `DetailView.tsx`'s "Correction History" card is now "Audit
+History," rendering `denial.audit_events` as one list; `appeal_review`
+entries get a cyan "Appeal review" badge and reuse `StatusPill` (the same
+green/red/cyan `status-approved`/`status-rejected`/`status-sent` tokens
+from `index.css` used elsewhere) to show `old_value → new_value` as real
+status pills, while `correction` entries keep their prior look (a blue
+"Correction" badge, strikethrough old value → highlighted new value).
+Verified in both themes and at 390px mobile width.
 
 ### How corrections and the live classification row interact
 

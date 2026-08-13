@@ -70,16 +70,30 @@ class AppealOut(BaseModel):
     created_at: datetime.datetime
 
 
-class CorrectionOut(BaseModel):
+class AuditEventOut(BaseModel):
+    """One row of the unified, immutable audit-event log: either a human
+    correction to an AI-produced field, or an appeal approve/reject/sent
+    review decision (see `event_type`). Both shapes reuse the same
+    field_corrected/old_value/new_value/corrected_by columns -- for
+    event_type="appeal_review", field_corrected is always "appeal.status",
+    old_value/new_value are the previous/new appeal status, corrected_by is
+    the reviewer, and appeal_id identifies which Appeal row it was about."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    event_type: str
+    appeal_id: int | None
     field_corrected: str
     old_value: str
     new_value: str
     corrected_by: str
     corrected_at: datetime.datetime
     notes: str | None
+
+
+# Back-compat alias -- CorrectionOut used to be the only shape this table produced.
+CorrectionOut = AuditEventOut
 
 
 class DenialDetail(BaseModel):
@@ -96,7 +110,7 @@ class DenialDetail(BaseModel):
     extraction: ExtractionOut | None
     classification: ClassificationOut | None
     appeal: AppealOut | None
-    corrections: list[CorrectionOut]
+    audit_events: list[AuditEventOut]
 
 
 class ProcessResponse(BaseModel):
