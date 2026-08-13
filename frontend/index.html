@@ -11,6 +11,18 @@
       rel="stylesheet"
     />
     <title>Claims Denial Triage — Gauge AI Automations</title>
+    <script>
+      // Applies the dark class before first paint so there's no
+      // flash-of-wrong-theme -- must stay in sync with the getStoredTheme /
+      // getSystemTheme logic in src/App.tsx's useTheme hook.
+      (function () {
+        try {
+          var stored = localStorage.getItem("theme");
+          var dark = stored === "dark" || (stored !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+          if (dark) document.documentElement.classList.add("dark");
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

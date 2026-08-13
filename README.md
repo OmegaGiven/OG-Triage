@@ -1,6 +1,6 @@
 # Gauge AI Automations — Claims Denial Triage + Appeal Drafting
 
-**Status: Phase 1-9 done.** This repo holds a pipeline that ingests insurance
+**Status: Phase 1-10 done.** This repo holds a pipeline that ingests insurance
 claim-denial letters, extracts structured fields, classifies the denial
 reason, and drafts an appeal letter, with a Postgres-backed audit trail and a
 deterministic eval/regression harness. The pipeline is profile-driven and
@@ -53,6 +53,12 @@ a live, side-by-side multi-company demo.
   backed by a new `GET /api/profiles/{key}` detail endpoint and an explicitly
   demo-scoped `POST /api/demo/reset-sample` endpoint. See "Phase 8 —
   Multi-Company Live Demo" below.
+- **Phase 10** — dark mode: a manual light/dark toggle in the top nav
+  (`frontend/src/App.tsx`), defaulting to OS `prefers-color-scheme` on first
+  load and persisted to `localStorage` once explicitly chosen, applied via a
+  `.dark` class on `<html>` with real per-token dark values (not an
+  invert filter) for every color in `index.css`'s `@theme` block, including
+  the dashboard's charts. See "Phase 10 — Dark Mode" below.
 - **Phase 9** — full-stack cold-start rehearsal: killed every running
   process, brought Postgres/backend/frontend back up strictly by following
   this README's own steps, and clicked through the entire application in a
@@ -945,6 +951,119 @@ the whole session -- no unhandled exceptions, and the one `PipelineStageError`
 retry path that exists for this exact failure mode did not fire on the
 post-fix runs (i.e. the fix worked on the first attempt, not by masking a
 flaky one).
+
+## Phase 10 — Dark Mode
+
+A manual light/dark toggle — the sun/moon icon button in `TopNav`
+(`frontend/src/App.tsx`), next to the mobile hamburger button, always
+visible at every breakpoint.
+
+### How it works
+
+- **State/persistence** — `useTheme()` in `App.tsx`: on first load, reads
+  `localStorage["theme"]`; if nothing is stored, falls back to
+  `window.matchMedia("(prefers-color-scheme: dark)")`. Clicking the toggle
+  writes the explicit choice to `localStorage` and stops following OS
+  preference changes from that point on (an OS `change` listener is only
+  acted on while `localStorage["theme"]` is still unset).
+- **Applying the theme** — a `dark` class on `<html>`. Tailwind v4 defaults
+  `dark:` to a `prefers-color-scheme` media query with no way to override it
+  manually; `index.css` opts into class-based dark mode instead via
+  `@custom-variant dark (&:where(.dark, .dark *));` (the v4-idiomatic
+  equivalent of v3's `darkMode: 'class'`, since there's no
+  `tailwind.config.ts` to put that in).
+- **No flash of the wrong theme** — a small inline `<script>` in
+  `frontend/index.html`'s `<head>` reads `localStorage`/`matchMedia` and
+  adds the `dark` class before the stylesheet or React ever run, so a hard
+  reload with dark stored/preferred never shows a light flash. Kept
+  logically in sync with `useTheme()`'s light/dark resolution by hand (it's
+  plain JS, not a shared import, since it has to run before the bundle
+  loads).
+
+### Color tokens — real dark values, not an invert
+
+Per the dataviz skill's rule that dark mode gets its own validated steps
+from each ramp rather than an automatic flip, every color in `index.css`'s
+`@theme` block gets a real dark-mode value, defined under a `.dark { ... }`
+block that redefines the same CSS custom properties `@theme` already
+generates. Because every Tailwind utility (`bg-ink-50`, `text-status-
+approved-fg`, etc.) compiles to `var(--color-ink-50)` and friends rather
+than an inlined hex, redefining these variables re-themes the entire app
+with almost no `dark:`-prefixed utilities needed — only literal colors
+(`bg-white`, `stroke="white"`) needed hand conversion, to a new `--color-
+surface` token (`#ffffff` light / `#141b2b` dark) used for cards, inputs,
+the header, the modal, and chart tooltips.
+
+Key dark values:
+
+- **Ink (neutral) scale** — role-inverted per step, not a literal reversed
+  copy: page canvas `#0b1220`, primary text `#e4e9f2`, headings `#f7f9fc`.
+- **Surface** — `#141b2b`, deliberately *lighter* than the page canvas
+  (dark UIs raise elevation by adding light), matching how `white` sits
+  above `ink-50` in light mode.
+- **Status pills** (`new`/`processing`/`classified`/`appeal_drafted`/
+  `needs_review`/`approved`/`rejected`/`sent`) — own low-lightness
+  bg / light-saturated-fg pairs per status, not inverted light-mode hexes.
+- **Confidence badge** (`ConfidenceBadge`) — `#e0555a` / `#c08600` /
+  `#3f9d68`, validated as a categorical triple against the dark surface
+  (see below); legal in the CVD 6-8 WARN band because every use already
+  ships a mandatory text label alongside the color.
+- **Confidence histogram ordinal ramp** (dashboard) — `#3a6ea8` →
+  `#4f8ac2` → `#6aa3d6` → `#8fc2ec`, its own dark-surface-validated steps
+  (the light-mode brand-400/500/700/900 ramp's dark end is too dark to
+  read on a dark card).
+- **Cost-by-stage / cost-by-company categorical palette** — slot 1 keeps
+  `--color-brand-500` (`#2f7fc4`, already load-bearing, reads fine on
+  dark), slots 2-3 become `#b3860c` (amber) / `#17a591` (teal).
+
+### Palette validator output (dataviz skill, `scripts/validate_palette.js`)
+
+```
+node scripts/validate_palette.js "#2f7fc4,#b3860c,#17a591" --mode dark --surface "#141b2b"
+  [PASS] Lightness band         all 3 inside L 0.48–0.67
+  [PASS] Chroma floor           all 3 >= 0.1
+  [PASS] CVD separation         worst adjacent #17a591↔#b3860c ΔE 13.2 (protan) · tritan 20.5
+  [PASS] Normal-vision floor    worst adjacent #17a591↔#b3860c ΔE 18.1 (normal)
+  [PASS] Contrast vs surface    all 3 >= 3:1
+  → ALL CHECKS PASS
+
+node scripts/validate_palette.js "#3a6ea8,#4f8ac2,#6aa3d6,#8fc2ec" --mode dark --surface "#141b2b" --ordinal
+  [PASS] Lightness monotone / Adjacent ΔL >= 0.06 / Light-end contrast (3.26:1) / Single hue
+  → ALL CHECKS PASS
+
+node scripts/validate_palette.js "#e0555a,#c08600,#3f9d68" --mode dark --surface "#141b2b"
+  [PASS] Lightness band, Chroma floor, Contrast vs surface
+  [WARN] CVD separation (worst adjacent ΔE 6.4, legal 6-8 floor band — mandatory
+         secondary encoding present: ConfidenceBadge always pairs the color
+         with a text label)
+  [PASS] Normal-vision floor    ΔE 15.3
+  → ALL CHECKS PASS
+```
+
+### Verification
+
+Killed the stale `uvicorn`/`vite` processes from a prior session and
+brought both back up clean per this README's own steps, then drove all
+four routes (`/denials`, `/denials/:id`, `/dashboard`, `/profiles`) in an
+actual browser via Playwright at 390px and 1920px, in both themes:
+
+- Toggle switches instantly and the choice survives a full page reload
+  (`localStorage["theme"]` checked directly, not just visually).
+- Checked every card, status pill, table row (including hover — the row
+  hover tint is visibly distinct from the surrounding card in dark mode),
+  button, input, modal, and chart for legibility; none found illegible.
+- Dashboard charts (accuracy trend line, confidence histogram, cost-by-
+  stage/company bars) all render with the dark-validated palettes above.
+- Hard-reloaded with dark stored and confirmed `document.documentElement`
+  already has the `dark` class immediately after navigation (no light
+  flash).
+- Light mode re-screenshotted on `/denials` and `/dashboard` at 1920px and
+  confirmed pixel-equivalent to the pre-dark-mode design (no regression).
+- Browser console clean (0 errors, 0 warnings) on every page load and
+  toggle, in both themes.
+- `npx tsc -b --noEmit`, `npx oxlint`, and `npm run build` all clean.
+
+No backend code was touched for this phase.
 
 ## What's next (not built yet)
 

@@ -141,7 +141,7 @@ export function AccuracyTrendChart({ points }: { points: TrendPoint[] }) {
               cy={yFor(p.score)}
               r={hover === i ? 6 : 4.5}
               fill="var(--color-brand-500)"
-              stroke="white"
+              stroke="var(--color-surface)"
               strokeWidth={2}
               className="transition-[r] duration-100"
             />
@@ -157,7 +157,7 @@ export function AccuracyTrendChart({ points }: { points: TrendPoint[] }) {
 
       {hover !== null && (
         <div
-          className="pointer-events-none absolute rounded-md border border-ink-200 bg-white px-2.5 py-1.5 text-xs shadow-card"
+          className="pointer-events-none absolute rounded-md border border-ink-200 bg-surface px-2.5 py-1.5 text-xs shadow-card"
           style={{
             left: `${(xFor(hover) / width) * 100}%`,
             top: `${(yFor(points[hover].score) / height) * 100}%`,
@@ -202,7 +202,16 @@ export function MagnitudeBarRow({
 
 /* ------------------------------- Confidence histogram (ordinal ramp) ------------------------------- */
 
-const ORDINAL_STEPS = ["bg-brand-400", "bg-brand-500", "bg-brand-700", "bg-brand-900"];
+// References the --color-ordinal-1..4 tokens (index.css @theme + .dark
+// block) rather than bg-brand-400/500/700/900 directly -- the brand
+// scale's own dark end is too dark to read against a dark card, so the
+// dark-mode-validated ordinal ramp lives on its own token names.
+const ORDINAL_STEPS = [
+  "bg-[var(--color-ordinal-1)]",
+  "bg-[var(--color-ordinal-2)]",
+  "bg-[var(--color-ordinal-3)]",
+  "bg-[var(--color-ordinal-4)]",
+];
 
 export function ConfidenceHistogram({
   buckets,
@@ -243,7 +252,7 @@ export function ConfidenceHistogram({
                 onMouseLeave={() => setHover((h2) => (h2 === i ? null : h2))}
               >
                 {hover === i && (
-                  <div className="pointer-events-none absolute -top-8 rounded-md border border-ink-200 bg-white px-2 py-1 text-xs font-semibold text-ink-900 shadow-card">
+                  <div className="pointer-events-none absolute -top-8 rounded-md border border-ink-200 bg-surface px-2 py-1 text-xs font-semibold text-ink-900 shadow-card">
                     {b.count} denial{b.count === 1 ? "" : "s"}
                   </div>
                 )}
