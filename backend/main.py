@@ -13,7 +13,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routes import denials, eval as eval_routes, health, profiles, usage
+from api.routes import analytics, denials, eval as eval_routes, health, profiles, usage
 
 app = FastAPI(
     title="Gauge AI Claims Triage API",
@@ -45,3 +45,4 @@ app.include_router(denials.router)
 app.include_router(eval_routes.router)
 app.include_router(profiles.router)
 app.include_router(usage.router)
+app.include_router(analytics.router)

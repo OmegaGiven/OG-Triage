@@ -76,6 +76,19 @@
   --color-confidence-mid: #d97706;
   --color-confidence-high: #16a34a;
 
+  /* Phase 7: small categorical extension for the monitoring dashboard --
+     identity color for a fixed, small set of named series (pipeline stage,
+     portfolio company), never used for confidence/risk/status. Fixed
+     3-slot order (blue, amber, teal) validated against the dataviz skill's
+     six-checks validator on the app's white card surface: all adjacent
+     pairs clear the CVD (worst ΔE 13.1) and normal-vision (worst ΔE 19.8)
+     floors, so this order must not be reshuffled per-chart. Slot 1 reuses
+     --color-brand-500 (already load-bearing elsewhere); slots 2-3 are new.
+     Run: node scripts/validate_palette.js "#2f7fc4,#b5730c,#0f9488"
+     --mode light --surface "#ffffff" (from the dataviz skill directory). */
+  --color-viz-amber: #b5730c;
+  --color-viz-teal: #0f9488;
+
   /* Consistent corner-radius scale. */
   --radius-card: 0.75rem;
   --radius-pill: 999px;

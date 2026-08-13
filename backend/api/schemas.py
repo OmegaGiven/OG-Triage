@@ -175,6 +175,24 @@ class UsageResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Analytics
+# ---------------------------------------------------------------------------
+
+
+class ConfidenceBucket(BaseModel):
+    label: str = Field(description="Human-readable bucket range, e.g. '0.70-0.85'")
+    min_confidence: float
+    max_confidence: float
+    count: int
+
+
+class ConfidenceDistributionResponse(BaseModel):
+    source_company: str | None
+    total_classified: int = Field(description="Denials with a classification counted (one per denial, most recent)")
+    buckets: list[ConfidenceBucket]
+
+
+# ---------------------------------------------------------------------------
 # Health
 # ---------------------------------------------------------------------------
 

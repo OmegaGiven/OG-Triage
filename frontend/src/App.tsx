@@ -1,10 +1,12 @@
 import { Navigate, Route, Routes, Link, useLocation } from "react-router-dom";
 import { QueueView } from "./pages/QueueView";
 import { DetailView } from "./pages/DetailView";
+import { DashboardView } from "./pages/DashboardView";
 
 function TopNav() {
   const location = useLocation();
   const onQueue = location.pathname === "/" || location.pathname.startsWith("/denials");
+  const onDashboard = location.pathname.startsWith("/dashboard");
   return (
     <header className="sticky top-0 z-10 border-b border-ink-200 bg-white/90 backdrop-blur">
       <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-3.5">
@@ -32,6 +34,14 @@ function TopNav() {
           >
             Queue
           </Link>
+          <Link
+            to="/dashboard"
+            className={`rounded-md px-3 py-1.5 font-medium transition-colors ${
+              onDashboard ? "bg-brand-50 text-brand-700" : "text-ink-500 hover:bg-ink-50 hover:text-ink-800"
+            }`}
+          >
+            Monitoring
+          </Link>
         </nav>
       </div>
     </header>
@@ -47,6 +57,7 @@ export default function App() {
           <Route path="/" element={<Navigate to="/denials" replace />} />
           <Route path="/denials" element={<QueueView />} />
           <Route path="/denials/:id" element={<DetailView />} />
+          <Route path="/dashboard" element={<DashboardView />} />
           <Route
             path="*"
             element={

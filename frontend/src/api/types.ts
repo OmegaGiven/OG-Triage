@@ -153,3 +153,16 @@ export interface UsageResponse {
   by_stage: UsageByStage[];
   by_day: UsageByDay[];
 }
+
+export interface ConfidenceBucket {
+  label: string;
+  min_confidence: number;
+  max_confidence: number;
+  count: number;
+}
+
+export interface ConfidenceDistributionResponse {
+  source_company: string | null;
+  total_classified: number;
+  buckets: ConfidenceBucket[];
+}

@@ -608,11 +608,129 @@ No backend code was modified for this phase — the Phase 5 API's shapes
 matched what the frontend needed exactly as documented in
 `api/schemas.py`.
 
+## Phase 7 — Monitoring Dashboard
+
+`frontend/src/pages/DashboardView.tsx` (route `/dashboard`, "Monitoring" in
+the top nav): the answer to "how would you know if this stopped working or
+regressed" — a single monitoring surface over the eval harness, the live
+denial population's classification confidence, and token/cost usage. Reuses
+Phase 6's design system and API client patterns; no chart library was
+added — every chart is plain inline SVG/HTML built against the dataviz
+method (form before color, a validated palette, hover tooltips, a legend
+for every multi-series chart), in `frontend/src/components/charts.tsx`.
+
+### What's on it
+
+- **Regression status banner** — green "No regression" / red "Regression
+  detected" / neutral "No prior baseline" (first run), computed client-side
+  from the two most recent `GET /api/eval/runs` rows using the *same* 5
+  percentage-point threshold Phase 3's `run_eval.py` uses
+  (`REGRESSION_THRESHOLD_PP`) — the banner shows the real delta in
+  percentage points, not a re-derived number.
+- **Eval accuracy over time** — line chart of `accuracy_score` across all
+  eval runs. Handles the sparse-data case deliberately: a single run
+  renders as one large annotated dot ("first eval run recorded... becomes
+  the baseline"), not a fake flat line; 2+ runs render a real line with a
+  hover tooltip (exact score + timestamp) and gridlines. Three real eval
+  runs exist as of this phase (all scoring 0.95 — deterministic scoring
+  against unchanged DB contents, so a flat line here is the *correct*
+  result, not a placeholder).
+- **Per-dimension breakdown** — the latest run's `details.
+  classification_accuracy` / `extraction_accuracy` / `appeal_completeness`
+  as three labeled magnitude bars (87.5% / 100% / 100% for the current
+  data), pulled straight from the `eval_runs.details` jsonb, not
+  recomputed.
+- **Classification confidence distribution** — a new backend endpoint (see
+  below) bucketed into a 4-step histogram, with a dashed reference line at
+  the pipeline's real 0.7 `needs_review` routing threshold (README "Phase
+  4") rather than an invented cutoff.
+- **Token/cost panel** — stat tiles (total tokens, total cost, cost per
+  denial processed = total cost / total denials), a cost-by-pipeline-stage
+  bar chart, a cost-by-company bar chart (Comprehensive EyeCare Partners vs.
+  Reliable Medical — the same pipeline code driving both, Phase 4's point),
+  and a by-day usage chart. All from the existing `GET /api/usage`
+  endpoint, no new usage plumbing needed.
+
+### New backend endpoint
+
+`GET /api/analytics/confidence-distribution` (optional `?source_company=`),
+in `backend/api/routes/analytics.py` — the one genuinely missing piece:
+neither `/api/usage` nor `/api/denials` exposes classification-confidence
+aggregates. Buckets the live population's `classifications.confidence`
+(most recent classification per denial, via a per-denial
+`max(created_at)` subquery, so a denial reprocessed more than once isn't
+double-counted) into `0.00-0.50` / `0.50-0.70` / `0.70-0.85` / `0.85-1.00`
+— edges chosen from the real observed spread (0.45-0.98 across the 62-denial
+population) and aligned to the pipeline's real 0.7 routing threshold.
+Response shape (`ConfidenceDistributionResponse` /
+`ConfidenceBucket` in `api/schemas.py`) follows the existing API's
+conventions (Pydantic response models, same query-param pattern as
+`/api/usage?source_company=`). No pipeline/eval/profile logic was touched.
+
+### Palette
+
+Extends `index.css`'s `@theme` block rather than hardcoding chart colors:
+added `--color-viz-amber` / `--color-viz-teal` as a fixed 3-slot categorical
+order (`brand-500` blue, amber, teal) for the two small-N identity charts
+(pipeline stage, company). The confidence histogram reuses the existing
+brand ramp (`brand-400/500/700/900`) as a validated ordinal (light→dark)
+scale instead of inventing a 4-color traffic-light ramp — an initial
+red→amber→lime→green candidate for that histogram **failed** the dataviz
+skill's CVD validator (adjacent-pair ΔE as low as 3.1, normal-vision floor
+5.7, both well under the required floors) and was dropped in favor of the
+single-hue ordinal ramp plus a labeled 0.7 threshold line, which validates
+clean. See `node scripts/validate_palette.js` output in the Phase 7
+verification notes below and the comment above the new theme tokens in
+`index.css`.
+
+### Verification
+
+Brought up the full stack for real (Postgres already running via
+`docker-compose`, `uvicorn main:app --reload` from `backend/` using its own
+`.venv`, `npm run dev` from `frontend/`) and loaded `/dashboard` in an
+actual browser via Playwright, not just a build check:
+
+- Confirmed real data end-to-end: `GET /api/analytics/confidence-distribution`
+  returned `total_classified: 62` with bucket counts `2 / 9 / 10 / 41`
+  (matches a direct DB query used during development); `GET /api/usage`
+  totals ($2.99, 506.9K tokens, 189 calls) and the by-stage/by-company
+  breakdowns rendered on the page exactly matched the raw API response.
+  Triggered one additional real eval run via `POST /api/eval/run` (no LLM
+  calls — confirmed via `grep -i anthropic backend/eval/*.py`, which only
+  matches a docstring saying it deliberately makes none) to get a 3-point
+  trend line instead of shipping something that only looks right with a
+  single data point.
+  - Dataviz palette validator output (categorical, 3-slot, white card
+    surface):
+    ```
+    node scripts/validate_palette.js "#2f7fc4,#b5730c,#0f9488" --mode light --surface "#ffffff"
+      [PASS] Lightness band         all 3 inside L 0.43–0.77
+      [PASS] Chroma floor           all 3 >= 0.1
+      [PASS] CVD separation         worst adjacent #0f9488↔#b5730c ΔE 13.1 (protan) · tritan 23.0
+      [PASS] Normal-vision floor    worst adjacent #0f9488↔#b5730c ΔE 19.8 (normal)
+      [PASS] Contrast vs surface    all 3 >= 3:1
+      → ALL CHECKS PASS
+    ```
+    and the confidence-histogram ordinal ramp:
+    ```
+    node scripts/validate_palette.js "#559fdc,#2f7fc4,#1c4f82,#17365a" --mode light --ordinal --surface "#ffffff"
+      [PASS] Lightness monotone / Adjacent ΔL / Light-end contrast (2.85:1) / Single hue
+      → ALL CHECKS PASS
+    ```
+- Console checked clean on both `/dashboard` and `/denials` (Playwright
+  `browser_console_messages`, 0 errors / 0 warnings on each) — Phase 6's
+  README notes a real hardcoded-CORS-port bug was caught this way, so this
+  wasn't skipped.
+- Hover-tested the accuracy-trend tooltip (screenshot confirms exact value
+  + timestamp readout) and took a full-page screenshot of the assembled
+  dashboard to check for label collisions/overflow (the company-comparison
+  bar chart's label column was widened after the first pass truncated
+  "Comprehensive EyeCare Partners" too aggressively; fixed and
+  re-screenshotted).
+- `npx tsc -b --noEmit` clean (no new TypeScript errors).
+
 ## What's next (not built yet)
 
-The eval/monitoring dashboard (surfacing `GET /api/eval/runs` and `GET
-/api/usage` in the UI) and a profile-switcher demo — both explicitly
-deferred out of Phase 6's scope. The frontend's API client
-(`src/api/client.ts`) and design system (`src/index.css`) already cover
-what those views would need (usage/eval types are in `src/api/types.ts`),
-so adding them should mean new pages, not new plumbing.
+A profile-switcher demo — the only thing left explicitly deferred from
+earlier phases. The dashboard added in Phase 7 covers what was previously
+listed here as not-yet-built.

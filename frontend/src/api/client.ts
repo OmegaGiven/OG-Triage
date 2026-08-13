@@ -1,6 +1,7 @@
 import type {
   AppealOut,
   AppealStatusUpdateRequest,
+  ConfidenceDistributionResponse,
   CorrectionCreateRequest,
   CorrectionOut,
   DenialDetail,
@@ -96,4 +97,7 @@ export const api = {
 
   listEvalRuns: () => request<EvalRunOut[]>(`/eval/runs`),
   triggerEvalRun: () => request<EvalRunOut>(`/eval/run`, { method: "POST" }),
+
+  getConfidenceDistribution: (source_company?: string) =>
+    request<ConfidenceDistributionResponse>(`/analytics/confidence-distribution${toQuery({ source_company })}`),
 };
