@@ -127,6 +127,33 @@ export interface ProfileOut {
   display_name: string;
 }
 
+export interface ExtractionFieldOut {
+  name: string;
+  type: string;
+  description: string;
+  required: boolean;
+}
+
+export interface AppealGuidanceExcerpt {
+  category: string;
+  excerpt: string;
+}
+
+export interface ProfileDetailOut {
+  key: string;
+  display_name: string;
+  extraction_fields: ExtractionFieldOut[];
+  category_taxonomy: string[];
+  appeal_guidance: AppealGuidanceExcerpt[];
+}
+
+export interface DemoResetOut {
+  denial_id: string;
+  source_company: string;
+  claim_ref: string;
+  status: string;
+}
+
 export interface UsageByStage {
   stage: string;
   input_tokens: number;

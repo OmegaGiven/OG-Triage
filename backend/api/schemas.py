@@ -142,6 +142,51 @@ class ProfileOut(BaseModel):
     display_name: str
 
 
+class ExtractionFieldOut(BaseModel):
+    """One field from a profile's extraction_tool schema, shaped for display
+    -- not the raw Anthropic tool-use JSON schema."""
+
+    name: str
+    type: str
+    description: str
+    required: bool
+
+
+class AppealGuidanceExcerpt(BaseModel):
+    """A short, readable excerpt of a profile's per-category appeal
+    guidance -- not the full appeal system prompt."""
+
+    category: str
+    excerpt: str
+
+
+class ProfileDetailOut(BaseModel):
+    """Full profile detail for the Phase 8 side-by-side company comparison
+    (/profiles). `category_taxonomy` is intentionally identical across every
+    profile -- it's the shared, non-duplicated part of the pipeline -- while
+    `extraction_fields` and `appeal_guidance` are what genuinely differ per
+    company."""
+
+    key: str
+    display_name: str
+    extraction_fields: list[ExtractionFieldOut]
+    category_taxonomy: list[str]
+    appeal_guidance: list[AppealGuidanceExcerpt]
+
+
+# ---------------------------------------------------------------------------
+# Demo tools (Phase 8) -- explicitly demo-scoped, not a production data-
+# management feature. See api/routes/demo.py.
+# ---------------------------------------------------------------------------
+
+
+class DemoResetOut(BaseModel):
+    denial_id: uuid.UUID
+    source_company: str
+    claim_ref: str
+    status: str
+
+
 # ---------------------------------------------------------------------------
 # Usage
 # ---------------------------------------------------------------------------

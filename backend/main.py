@@ -13,7 +13,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routes import analytics, denials, eval as eval_routes, health, profiles, usage
+from api.routes import analytics, demo, denials, eval as eval_routes, health, profiles, usage
 
 app = FastAPI(
     title="Gauge AI Claims Triage API",
@@ -23,7 +23,7 @@ app = FastAPI(
         "actions (appeal status, corrections audit trail), eval-run history, "
         "company profiles, and token/cost usage reporting."
     ),
-    version="0.5.0",
+    version="0.8.0",
 )
 
 # Permissive local-dev CORS: a Vite React+TS dev server defaults to
@@ -46,3 +46,4 @@ app.include_router(eval_routes.router)
 app.include_router(profiles.router)
 app.include_router(usage.router)
 app.include_router(analytics.router)
+app.include_router(demo.router)

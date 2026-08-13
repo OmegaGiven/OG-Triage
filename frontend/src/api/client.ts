@@ -4,10 +4,12 @@ import type {
   ConfidenceDistributionResponse,
   CorrectionCreateRequest,
   CorrectionOut,
+  DemoResetOut,
   DenialDetail,
   DenialListResponse,
   EvalRunOut,
   ProcessResponse,
+  ProfileDetailOut,
   ProfileOut,
   UsageResponse,
 } from "./types";
@@ -91,6 +93,10 @@ export const api = {
     }),
 
   listProfiles: () => request<ProfileOut[]>(`/profiles`),
+  getProfileDetail: (key: string) => request<ProfileDetailOut>(`/profiles/${key}`),
+
+  resetDemoSample: (source_company: string) =>
+    request<DemoResetOut>(`/demo/reset-sample${toQuery({ source_company })}`, { method: "POST" }),
 
   getUsage: (source_company?: string) =>
     request<UsageResponse>(`/usage${toQuery({ source_company })}`),

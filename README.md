@@ -1,12 +1,13 @@
 # Gauge AI Automations — Claims Denial Triage + Appeal Drafting
 
-**Status: Phase 1-6 done.** This repo holds a pipeline that ingests insurance
+**Status: Phase 1-8 done.** This repo holds a pipeline that ingests insurance
 claim-denial letters, extracts structured fields, classifies the denial
 reason, and drafts an appeal letter, with a Postgres-backed audit trail and a
 deterministic eval/regression harness. The pipeline is profile-driven and
 currently drives two portfolio companies' claim types (eye-care and DME) off
 one shared codebase, is exposed over a FastAPI REST layer, and is reviewable
-through a React/TypeScript queue + detail UI.
+through a React/TypeScript queue + detail UI with a monitoring dashboard and
+a live, side-by-side multi-company demo.
 
 - **Phase 1** — the Postgres schema (`denials`, `extractions`,
   `classifications`, `appeals`, `corrections`, `eval_runs`, `token_usage`),
@@ -41,6 +42,17 @@ through a React/TypeScript queue + detail UI.
   view + detail/review view) consuming the Phase 5 API, with React Query for
   data fetching and Tailwind CSS for a small, consistent design system. See
   "Phase 6 — Frontend (Queue + Review)" below.
+- **Phase 7** — `frontend/src/pages/DashboardView.tsx` (`/dashboard`): a
+  monitoring dashboard over the eval harness, live classification-confidence
+  distribution, and token/cost usage, plus a new
+  `GET /api/analytics/confidence-distribution` endpoint. See "Phase 7 —
+  Monitoring Dashboard" below.
+- **Phase 8** — `frontend/src/pages/ProfilesView.tsx` (`/profiles`): a
+  side-by-side company-profile comparison and a live, on-demand two-company
+  processing demo (real Anthropic API calls triggered from the browser),
+  backed by a new `GET /api/profiles/{key}` detail endpoint and an explicitly
+  demo-scoped `POST /api/demo/reset-sample` endpoint. See "Phase 8 —
+  Multi-Company Live Demo" below.
 
 ## Repo layout
 
@@ -73,6 +85,8 @@ app/
       pages/
         QueueView.tsx                # denial worklist: filters, table, pagination
         DetailView.tsx                 # the reviewer workspace (see below)
+        DashboardView.tsx              # Phase 7: eval/confidence/usage monitoring dashboard
+        ProfilesView.tsx                # Phase 8: multi-company profile comparison + live demo
       App.tsx                       # routing + top nav
       index.css                     # design system (Tailwind v4 @theme block)
     .env.example
@@ -729,8 +743,113 @@ actual browser via Playwright, not just a build check:
   re-screenshotted).
 - `npx tsc -b --noEmit` clean (no new TypeScript errors).
 
+## Phase 8 — Multi-Company Live Demo
+
+`frontend/src/pages/ProfilesView.tsx` (route `/profiles`, "Profiles" in the
+top nav): the visual answer to the case study's explicitly required
+question, "how would you adapt this for a second portfolio company with a
+similar problem" — a live, clickable demo instead of something only
+explained in the Loom recording. Everything on this page is real: real API
+data, and a real Anthropic API call triggered from the browser.
+
+### What's on it
+
+- **Shared category taxonomy** — the six `CLASSIFICATION_CATEGORIES` from
+  `db/models.py`, rendered once and labeled "reused, not duplicated" — both
+  companies classify into the exact same six root causes; there is nothing
+  company-specific to show here, which is itself part of the story.
+- **Side-by-side profile columns** — one card per company, each showing its
+  full extraction field list (name, type, required/optional, description)
+  and a readable excerpt of its appeal guidance per category. This is the
+  most visually convincing part: Comprehensive EyeCare Partners' column
+  lists `cpt_code`, `cpt_description`, `physician_npi`, ... right next to
+  Reliable Medical's `hcpcs_code`, `equipment_type`,
+  `lmn_reference_number`, ... — same layout, same component, genuinely
+  different config.
+- **Live processing demo** — a "Demo Tools" reset action (see below) plus a
+  per-company card that reuses `DetailView.tsx`'s exact "Process with AI"
+  pattern (same mutation shape, same loading copy, same
+  extraction/classification/appeal display components —
+  `KeyValueGrid`/`ConfidenceBadge`/`StatusPill`) so clicking "Process with
+  AI" for each company in turn makes two real Anthropic API calls and shows
+  the CEP and DME extractions populate with visibly different fields.
+
+### New backend endpoints
+
+- `GET /api/profiles/{key}` (`ProfileDetailOut` in `api/schemas.py`) —
+  extends the existing lean `GET /api/profiles` (still returns
+  `key`/`display_name` only, unchanged, since `QueueView`'s filter dropdown
+  only needs that) with a second, richer per-profile endpoint: extraction
+  fields shaped from `extraction_tool`'s Anthropic tool-use JSON schema into
+  a clean `[{name, type, description, required}]` list (not the raw schema
+  dump), the shared `category_taxonomy`, and a short excerpt (~220 chars,
+  whitespace-collapsed) of `appeal_guidance` per category rather than the
+  full appeal system prompt text. Pure read, no `profiles/` or `pipeline/`
+  code touched.
+- `POST /api/demo/reset-sample?source_company=...`
+  (`backend/api/routes/demo.py`, `DemoResetOut` schema) — the demo-reset
+  mechanism, see below.
+
+### The demo-reset mechanism, and why it's clearly demo-only
+
+All 62 denials in the dataset were already batch-processed in earlier
+phases (39 CEP + 12 DME at `appeal_drafted`, 9 CEP + 2 DME at
+`needs_review`; verified via a direct DB query before building this) — so
+there was nothing sitting at `status="new"` to demo live processing
+against. Rather than fake it, `POST /api/demo/reset-sample` picks one
+already-processed denial for the given company (lowest `claim_ref`, so
+repeat clicks cycle deterministically to a different record instead of
+colliding), hard-deletes that one denial's `extractions`/
+`classifications`/`appeals`/`corrections` rows, and sets its `status` back
+to `"new"`. The delete is necessary, not cosmetic: `pipeline/extract.py`,
+`classify.py`, and `draft_appeal.py` always `INSERT` a new row per stage
+(see Phase 4/5) rather than upserting, so without clearing the prior rows a
+"reprocessed" denial's detail view would still show the old run's output
+underneath/alongside the new one.
+
+This is deliberately not a general data-management feature:
+- it only ever touches one denial at a time, chosen deterministically by
+  the endpoint, never by caller-supplied id;
+- it refuses (404) on any denial not already fully processed, so it can
+  never touch something still mid-review;
+- it lives in its own `api/routes/demo.py`, tagged separately from the real
+  `denials.py` review endpoints in the OpenAPI schema;
+- in the UI it's confined to a visually distinct, dashed-border "Demo
+  Tools" callout labeled "case-study only, not production" directly above
+  the live-demo cards — not a bare button sitting in the main denial
+  worklist or detail view.
+
+### Verification
+
+Brought up the full stack for real (Postgres via `docker-compose`,
+`uvicorn main:app` from `backend/`'s `.venv`, `vite` dev server from
+`frontend/`) and drove `/profiles` in an actual browser via Playwright:
+
+- `GET /api/profiles/comprehensive_eyecare_partners` and
+  `.../reliable_medical` both returned the full `ProfileDetailOut` shape
+  (16 and 18 extraction fields respectively, identical 6-category
+  taxonomy, readable appeal-guidance excerpts) — confirmed via direct
+  `curl`, not just the rendered page.
+- Clicked "Reset a sample Comprehensive EyeCare Partners denial for live
+  demo" → API reset `CLM-1199775` to `status="new"`; clicked "Process with
+  AI" → a real ~15-30s Anthropic call ran end-to-end and the card populated
+  with extracted fields (`cpt_code=V2785`, ...), classification
+  (`eligibility`, 95% confidence), and a drafted appeal letter.
+- Did the same for Reliable Medical → reset `CLM-2191089`, processed live,
+  and the card populated with genuinely different fields
+  (`hcpcs_code=E0470`, `equipment_type=BiPAP device`,
+  `lmn_reference_number=LMN-2026-3934`), classification (`coding_error`,
+  90% confidence), and its own drafted appeal — the two companies' cards
+  side by side after both runs is the intended "20 seconds" moment for the
+  Loom recording.
+- Confirmed both denials persisted to `status="appeal_drafted"` in Postgres
+  directly (`psql` query), not just in the UI's local state.
+- Console checked clean on `/profiles` before and after both live runs
+  (Playwright `browser_console_messages`, 0 errors / 0 warnings).
+- `npx tsc -b` and `oxlint` both clean; `vite build` production build
+  succeeds.
+
 ## What's next (not built yet)
 
-A profile-switcher demo — the only thing left explicitly deferred from
-earlier phases. The dashboard added in Phase 7 covers what was previously
-listed here as not-yet-built.
+Nothing explicitly deferred remains from the original phase plan as of
+Phase 8.
