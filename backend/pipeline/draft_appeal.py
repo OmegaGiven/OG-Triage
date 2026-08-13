@@ -79,6 +79,29 @@ def _run_once(
     if not draft_text or len(draft_text) < 200:
         raise PipelineStageError(f"appeal draft implausibly short ({len(draft_text)} chars)")
 
+    # Reject drafts that leak model self-correction/meta-commentary into
+    # the letter body (observed live: "April 21, 2025 -- wait, let me use
+    # the correct date reasoning." landing in the opening line of an
+    # otherwise-correct letter). This is unacceptable in a document meant
+    # to be sent to a real payer, so it's treated the same as a failed
+    # grounding check -- retried once rather than silently shipped.
+    lowered = draft_text.lower()
+    leak_markers = (
+        "wait, let me",
+        "wait -- let me",
+        "let me reconsider",
+        "let me recalculate",
+        "let me use the correct",
+        "actually, let me",
+        "hold on, let me",
+        "correct date reasoning",
+    )
+    found_leak = next((marker for marker in leak_markers if marker in lowered), None)
+    if found_leak:
+        raise PipelineStageError(
+            f"appeal draft contains leaked model reasoning/self-correction text: {found_leak!r}"
+        )
+
     # Cheap grounding check: the drafted letter should cite the claim number
     # we know is correct (from the denial row itself, not the extraction --
     # this also catches an extraction error corrupting the claim ref before

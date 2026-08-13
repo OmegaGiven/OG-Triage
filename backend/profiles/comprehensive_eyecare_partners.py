@@ -223,7 +223,12 @@ APPEAL_SYSTEM_PROMPT_TEMPLATE = (
     "body, and a signature block for Comprehensive EyeCare Partners' "
     "billing/appeals department.\n"
     "- Output ONLY the letter text -- no preamble, no commentary, no "
-    "markdown formatting."
+    "markdown formatting.\n"
+    "- Compute any date silently before writing it. Never show your work, "
+    "hesitation, or self-corrections in the letter body (e.g. never write "
+    "something like 'wait, let me use the correct date' or similar "
+    "mid-sentence reasoning) -- the letter must read as a final, "
+    "already-proofread document from the first character."
 )
 
 PROFILE = CompanyProfile(

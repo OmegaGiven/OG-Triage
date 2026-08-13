@@ -1,6 +1,6 @@
 # Gauge AI Automations — Claims Denial Triage + Appeal Drafting
 
-**Status: Phase 1-8 done.** This repo holds a pipeline that ingests insurance
+**Status: Phase 1-9 done.** This repo holds a pipeline that ingests insurance
 claim-denial letters, extracts structured fields, classifies the denial
 reason, and drafts an appeal letter, with a Postgres-backed audit trail and a
 deterministic eval/regression harness. The pipeline is profile-driven and
@@ -53,6 +53,14 @@ a live, side-by-side multi-company demo.
   backed by a new `GET /api/profiles/{key}` detail endpoint and an explicitly
   demo-scoped `POST /api/demo/reset-sample` endpoint. See "Phase 8 —
   Multi-Company Live Demo" below.
+- **Phase 9** — full-stack cold-start rehearsal: killed every running
+  process, brought Postgres/backend/frontend back up strictly by following
+  this README's own steps, and clicked through the entire application in a
+  real browser exactly as an evaluator would (queue filters/pagination, both
+  companies' detail views, a real correction, the dashboard, the profiles
+  comparison, and the live demo-reset-and-process flow for both companies)
+  with the console checked clean at 1920x1080 and 1440x900. Caught and fixed
+  one real bug this way -- see "Phase 9 — Cold-Start Verification" below.
 
 ## Repo layout
 
@@ -99,8 +107,13 @@ app/
 ### 1. Start Postgres
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
+
+(`docker-compose`, the standalone hyphenated binary, works too if you have
+it installed, but the `docker compose` subcommand form is the one bundled
+with current Docker installs and is what these instructions were verified
+against.)
 
 This brings up a single `postgres:16-alpine` container on **host port
 5544** (not the Postgres default 5432 — picked to avoid colliding with any
@@ -403,8 +416,12 @@ uvicorn main:app --reload
 ```
 
 Serves on `http://127.0.0.1:8000` by default. Interactive docs at
-`/docs` (Swagger UI) and `/openapi.json`. CORS is configured for a local
-Vite React+TS dev server (`http://localhost:5173` / `http://127.0.0.1:5173`).
+`/docs` (Swagger UI) and `/openapi.json`. CORS allows any `localhost`/
+`127.0.0.1` port via regex (see the comment above `CORSMiddleware` in
+`main.py`), not just Vite's default `5173` -- Vite silently picks the next
+free port (`5174`, `5175`, ...) if `5173` is already in use by something
+else on the machine, so a hardcoded single-port allowlist would break
+intermittently depending on what else is running.
 
 ### Structure
 
@@ -550,7 +567,7 @@ component:
 
 ### Running it
 
-Backend (from repo root, Postgres already up via `docker-compose up -d`):
+Backend (from repo root, Postgres already up via `docker compose up -d`):
 
 ```bash
 cd backend
@@ -567,8 +584,11 @@ cp .env.example .env.local   # VITE_API_BASE_URL=http://localhost:8000/api
 npm run dev
 ```
 
-Serves on `http://localhost:5173`. `backend/main.py`'s CORS config already
-allow-lists this origin.
+Serves on `http://localhost:5173` normally, or the next free port (`5174`,
+`5175`, ...) if something else on the machine is already using `5173` --
+`backend/main.py`'s CORS config allows any `localhost`/`127.0.0.1` port, so
+this doesn't require any manual config change either way; just use whatever
+port the `npm run dev` output actually prints.
 
 ### Verification
 
@@ -849,7 +869,84 @@ Brought up the full stack for real (Postgres via `docker-compose`,
 - `npx tsc -b` and `oxlint` both clean; `vite build` production build
   succeeds.
 
+## Phase 9 — Cold-Start Verification
+
+The whole point of this phase: every prior phase was verified individually
+by whichever agent built it, but never as one continuous cold-start run of
+the full stack, as an evaluator (or the Loom recording) would actually
+experience it.
+
+### What was done
+
+Killed every `uvicorn`/`vite`/`node` process rooted in this project and ran
+`docker compose down` (not `-v` -- the named volume, and with it the real
+62-denial dataset, was left untouched and confirmed intact by direct query
+afterward). Brought everything back up strictly by following this README's
+own documented steps (Postgres via `docker compose up -d`, backend via
+`alembic upgrade head` + `uvicorn main:app --reload --port 8000`, frontend
+via `npm run dev`), then drove the entire user journey in a real browser via
+Playwright: queue load/company-filter/status-filter/pagination, a
+Comprehensive EyeCare Partners detail view (CPT/physician-NPI fields) and a
+Reliable Medical detail view (HCPCS/equipment-type/LMN fields), a real
+correction submitted through the UI and independently re-verified with a
+direct DB query (not just the UI's post-submit state), the monitoring
+dashboard, the profiles comparison page, and the Demo Tools live
+reset-and-process flow for both companies (real Anthropic API calls). The
+browser console was checked after every page load and every action, at both
+1920x1080 and 1440x900 (two common Loom recording resolutions).
+
+### Bug found and fixed
+
+The Demo Tools live-process run for Comprehensive EyeCare Partners produced
+a drafted appeal letter whose opening line was: *"April 21, 2025 — wait, let
+me use the correct date reasoning."* -- the model's own self-correction
+scratchwork, leaked verbatim into a document meant to be reviewed and sent
+to a real payer. This is exactly the kind of thing that would have been
+embarrassing live on camera, and it slipped through Phase 8's verification
+because that phase's spot-check runs happened not to trigger it.
+
+Fixed two ways in `backend/pipeline/draft_appeal.py` and both
+`backend/profiles/*.py` appeal system prompts:
+
+1. Added an explicit prompt instruction (both company profiles) to compute
+   any date silently and never surface hesitation, self-correction, or
+   "show your work" language in the letter body.
+2. Added a defensive check in `draft_appeal.py._run_once()` -- the same
+   pattern the existing grounding check already uses -- that scans the
+   drafted text for a set of known leak markers (`"wait, let me"`, `"let me
+   reconsider"`, etc.) and raises `PipelineStageError` to trigger the
+   existing one-retry-then-fail path if one is found, so this failure mode
+   is now caught automatically rather than relying on a human noticing it.
+
+Re-ran the same denial live after the fix (both via a direct API call and
+again through the browser UI for a second, DME-side run) and confirmed a
+clean letter with no leaked reasoning either time, with zero retries fired
+on either run (the fix worked on the model's first response, not by
+papering over a flaky one via the retry path).
+
+### Real timing, for pacing the Loom recording
+
+- **Queue/detail page loads**: near-instant (<100ms server response; no
+  visible loading state in practice).
+- **Correction submit**: ~1-2s round trip (form submit to updated
+  correction-history list, no manual refresh needed).
+- **Demo Tools reset**: ~2-4s (delete of prior stage rows + status update).
+- **Process with AI / live pipeline run** (extract → classify → draft, real
+  Anthropic API, 3 sequential calls): **~20-30s** per denial, both companies
+  landed in this range during verification. This is the one spot in the
+  Loom that needs either narration to fill the wait or a cut -- don't stand
+  in silence for it.
+
+### Verification
+
+Full click-through above, plus: `npx tsc -b --noEmit` clean, `npx oxlint`
+clean, `npm run build` production build succeeds. Backend log reviewed for
+the whole session -- no unhandled exceptions, and the one `PipelineStageError`
+retry path that exists for this exact failure mode did not fire on the
+post-fix runs (i.e. the fix worked on the first attempt, not by masking a
+flaky one).
+
 ## What's next (not built yet)
 
 Nothing explicitly deferred remains from the original phase plan as of
-Phase 8.
+Phase 9.
