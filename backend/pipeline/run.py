@@ -24,7 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from db.models import Denial  # noqa: E402
+from db.models import CLASSIFICATION_CATEGORIES, Classification, Correction, Denial, Extraction  # noqa: E402
 from db.session import SessionLocal  # noqa: E402
 from profiles import get_profile  # noqa: E402
 
@@ -119,6 +119,118 @@ def process_denial_by_id(denial_id: uuid.UUID | str) -> str:
         if denial is None:
             raise ValueError(f"no denial with id={denial_id}")
         return process_denial(db, denial)
+    finally:
+        db.close()
+
+
+def draft_appeal_only(denial_id: uuid.UUID | str) -> str:
+    """
+    Single-stage entry point: run *only* draft_appeal against a denial's
+    existing (most recent) extraction and classification rows, without
+    rerunning extraction or classification.
+
+    Why this exists: a denial in needs_review (low classification
+    confidence, so process_denial never reached draft_appeal) can have its
+    classification hand-corrected via POST /corrections. That endpoint is
+    audit-log-only by design -- see api/routes/denials.py's
+    create_correction docstring -- it does NOT mutate the classifications
+    row itself, so the AI's original (possibly wrong) category is still
+    what's sitting in the classifications table after a correction. If we
+    naively read that row here, a "draft appeal from current state" button
+    would silently draft off the ORIGINAL category and the correction would
+    have no effect, defeating the point. So: this function looks for the
+    most recent corrections row with field_corrected="classification.category"
+    for this denial, and if one exists, its new_value overrides the category
+    used to build the appeal-drafting prompt -- the classifications row on
+    disk is still untouched (audit trail intact), but the appeal reflects
+    the human's correction.
+
+    Raises ValueError if the denial doesn't exist, or has no extraction or
+    no classification yet (both required inputs to draft_appeal) -- those
+    are real precondition failures for this endpoint, not a pipeline stage
+    failure, so they're surfaced as 4xx by the caller rather than routing
+    the denial to needs_review.
+    """
+    db = SessionLocal()
+    try:
+        denial = db.get(Denial, denial_id)
+        if denial is None:
+            raise ValueError(f"no denial with id={denial_id}")
+
+        extraction = (
+            db.query(Extraction)
+            .filter(Extraction.denial_id == denial.id)
+            .order_by(Extraction.created_at.desc())
+            .first()
+        )
+        if extraction is None:
+            raise ValueError(
+                f"denial {denial_id} has no extraction yet -- run full processing first"
+            )
+
+        classification_row = (
+            db.query(Classification)
+            .filter(Classification.denial_id == denial.id)
+            .order_by(Classification.created_at.desc())
+            .first()
+        )
+        if classification_row is None:
+            raise ValueError(
+                f"denial {denial_id} has no classification yet -- run full processing first"
+            )
+
+        category = classification_row.category
+        reasoning = (
+            f"Automated classification (model confidence {classification_row.confidence:.2f})."
+        )
+
+        correction = (
+            db.query(Correction)
+            .filter(
+                Correction.denial_id == denial.id,
+                Correction.field_corrected == "classification.category",
+            )
+            .order_by(Correction.corrected_at.desc())
+            .first()
+        )
+        if correction is not None:
+            if correction.new_value not in CLASSIFICATION_CATEGORIES:
+                raise ValueError(
+                    f"denial {denial_id}'s most recent classification.category correction "
+                    f"has an invalid new_value={correction.new_value!r}; must be one of "
+                    f"{CLASSIFICATION_CATEGORIES}"
+                )
+            category = correction.new_value
+            reasoning = (
+                f"Category corrected by {correction.corrected_by} from "
+                f"'{correction.old_value}' to '{correction.new_value}'"
+                + (f": {correction.notes}" if correction.notes else "")
+                + ". Draft this appeal around the CORRECTED category, not the original "
+                "AI classification."
+            )
+            logger.info(
+                "[%s] using human-corrected category=%s (was %s) for standalone appeal draft",
+                denial.id, category, classification_row.category,
+            )
+
+        classification_data = {
+            "category": category,
+            "confidence": classification_row.confidence,
+            "reasoning": reasoning,
+        }
+
+        profile = get_profile(denial.source_company)
+        result = draft_appeal(
+            db, denial, extraction.extracted_fields, classification_data, profile
+        )
+        if not result.success:
+            db.rollback()
+            raise ValueError(f"appeal drafting failed: {result.error}")
+
+        denial.status = "appeal_drafted"
+        db.commit()
+        logger.info("[%s] standalone appeal draft complete (category=%s)", denial.id, category)
+        return denial.status
     finally:
         db.close()
 

@@ -461,8 +461,9 @@ that don't exist as DB columns), not the DB schema.
 | GET | `/api/denials` | Paginated denial worklist; filter by `source_company`, `status`. |
 | GET | `/api/denials/{id}` | Full detail: raw_text, extraction, classification, appeal, corrections — one call, not four. |
 | POST | `/api/denials/{id}/process` | Runs the real extract→classify→draft_appeal pipeline for this one denial on-demand (real Anthropic API cost). |
+| POST | `/api/denials/{id}/appeal/draft` | Runs *only* the appeal-drafting stage against the denial's current extraction + classification — no re-extraction, no re-classification. See "Draft Appeal Letter (detail view)" below for why this exists and how it picks up a human classification correction. |
 | POST | `/api/denials/{id}/appeal/status` | Human review action: update an appeal's status (`approved`/`rejected`/`sent`) + reviewer. |
-| POST | `/api/denials/{id}/corrections` | Logs a human correction to an AI-produced field — the compliance audit-trail feature; writes a `corrections` row, does not mutate the original AI output. |
+| POST | `/api/denials/{id}/corrections` | Logs a human correction to an AI-produced field — the compliance audit-trail feature; writes a `corrections` row, does not mutate the original AI output (with one deliberate exception — see "Draft Appeal Letter (detail view)" below). |
 | GET | `/api/eval/runs` | Eval-run history, newest first (for the regression-tracking chart). |
 | POST | `/api/eval/run` | Triggers a new eval run against current DB contents (no LLM calls — see Phase 3) and writes a new `eval_runs` row. |
 | GET | `/api/profiles` | Lists registered company profiles (`key`, `display_name`) — backs the frontend's profile switcher. |
@@ -1197,6 +1198,161 @@ overflow. Also created and deleted a throwaway `status="new"` denial via
 `POST /api/denials` to confirm the original first-run "Process with AI"
 button (primary style, no confirm dialog) is unchanged. Browser console
 clean (0 errors, 0 warnings) throughout.
+
+## Draft Appeal Letter (detail view)
+
+### The problem
+
+`POST /api/denials/{id}/process` (Reprocess with AI, above) always reruns
+the *full* pipeline: extract → classify → draft_appeal. That's fine for
+"regenerate everything," but it's actively wrong for the most common
+`needs_review` recovery path: a denial whose classification confidence
+came back below `CONFIDENCE_THRESHOLD` (0.7, `pipeline/run.py`), so
+`process_denial` routed it to `needs_review` *before* ever reaching
+`draft_appeal`. A human reviewer looks at it, decides the AI's category was
+wrong, and logs a correction via the existing `POST /corrections` audit
+trail. There was previously no way to get an appeal drafted off that
+corrected category without hitting "Reprocess," which reruns extraction
+and classification too — a second, real LLM call that could easily land on
+a *different* wrong category (or the same original one), overwriting the
+context of the correction the human just made. Reprocessing to fix this
+defeats the point of having made the correction.
+
+### How corrections and the live classification row interact
+
+Checked this before building anything, per the task brief, because it
+determines whether a "draft from current classification" button can work
+at all: `POST /api/denials/{id}/corrections`
+(`backend/api/routes/denials.py::create_correction`) is, and remains,
+**audit-log only** — it writes a `corrections` row and does **not** touch
+the `classifications` table. The AI's original `category`/`confidence` row
+is left exactly as produced, on purpose, so the audit trail always has
+"what the AI said" preserved distinctly from "what a human corrected it
+to."
+
+Given that, a naive "draft appeal from the denial's current classification
+row" would silently ignore the correction and draft off the *original*
+(wrong) category — the exact failure mode the task called out to watch
+for. Rather than start mutating `classifications` rows (option (a) from
+the brief, which would blur the audit trail's "AI original vs. human
+correction" distinction that Phase 6 built specifically to keep separate),
+the new endpoint takes option (b): **`pipeline.run.draft_appeal_only`
+looks up the most recent `corrections` row with
+`field_corrected="classification.category"` for the denial, and if one
+exists, uses its `new_value` as the category fed into `draft_appeal`'s
+prompt — instead of the (still-unmutated) `classifications.category`
+column.** The `classifications` row itself is never written to by this
+endpoint or by corrections; only the *prompt-building* step prefers the
+correction when one exists. This is now the one place a correction has any
+effect beyond being an audit record — documented directly on both
+`create_correction`'s and `draft_appeal_only`'s docstrings so it isn't a
+surprise to anyone reading the audit-trail design later.
+
+`Classification.category` is a Postgres enum, but `corrections.new_value`
+is free text (correctable fields on other rows, like `appeal.draft_text`,
+are prose) — `draft_appeal_only` validates the correction's `new_value` is
+one of the six real `CLASSIFICATION_CATEGORIES` before using it as a
+category, raising a 400 if not, rather than passing an invalid value into
+`profile.appeal_system_prompt()` (which would `KeyError` on
+`appeal_guidance[category]`). In practice the frontend's `CorrectionForm`
+already constrains `new_value` to a `<select>` of the six valid categories
+when correcting `classification.category`, so this is a defense-in-depth
+check against a correction filed some other way (e.g. directly via the
+API), not a path reachable through the UI.
+
+One more wrinkle: `classify.py`'s `reasoning` field is never persisted to
+the `classifications` table (only `category`/`confidence`/`model_version`
+are columns) — it only exists transiently in-process during a full
+pipeline run, for `draft_appeal`'s prompt. Standalone drafting has no
+persisted reasoning to read back, so `draft_appeal_only` synthesizes a
+short one: either `"Automated classification (model confidence X.XX)."`
+when no correction exists, or a sentence naming who corrected it, from
+what, to what, and any notes, when one does — which also has the nice
+side effect of giving the LLM explicit context that this is a
+human-confirmed category, not just handing it a bare label.
+
+### New backend
+
+- `backend/pipeline/run.py::draft_appeal_only(denial_id)` — fetches the
+  denial's most recent `Extraction` and `Classification` rows (404s via
+  `ValueError` if either is missing — this endpoint requires both to
+  already exist, unlike `/process`), resolves the effective category as
+  described above, calls the existing `draft_appeal()` function unchanged
+  (no new pipeline logic — it was already standalone-callable given
+  extraction + classification + a profile), and on success advances
+  `denial.status` to `"appeal_drafted"` (a `needs_review` denial that gets
+  a manually-drafted appeal is no longer missing an appeal, so it leaves
+  `needs_review` the same way a full pipeline run would).
+- `POST /api/denials/{id}/appeal/draft` (`backend/api/routes/denials.py`)
+  — thin wrapper, mirrors `/process`'s shape (`ProcessResponse`:
+  `{denial_id, status}`), 400s on the `ValueError` cases above, 404s on an
+  unknown denial.
+
+### Frontend
+
+`frontend/src/pages/DetailView.tsx`: a new `btn-primary` "Draft Appeal
+Letter" button, visually and behaviorally distinct from "Process with
+AI"/"Reprocess with AI" (`btn-secondary`, unchanged). Visibility rule:
+`hasClassification && !hasAppeal` — shown once a classification exists
+(there's something to draft from) and hidden once an appeal exists
+(regenerating an existing appeal is what "Reprocess with AI" is for, so
+showing both would be two overlapping ways to do the same thing). This
+covers the primary `needs_review`-after-correction case without a status
+check, and also naturally covers a `classified` denial whose appeal draft
+failed and never got a row. When shown, it renders alongside "Reprocess
+with AI" in the header (both buttons available: draft a targeted appeal,
+or nuke-and-repave everything), each disabling the other while either
+mutation is in flight. Reuses the same loading-banner/spinner/error-banner
+pattern and React Query cache invalidation (`["denial", id]` +
+`["denials"]`) as the existing process/reprocess mutation — no new UX
+pattern introduced.
+
+### Verification
+
+Started backend (`uvicorn`, port 8000) and frontend (`vite`, port 5174)
+against the live seeded Postgres DB. Queried directly for `needs_review`
+denials with a classification but no appeal — several exist in seed data,
+confirming the button-visibility case is real, not hypothetical.
+
+**The one thing that had to actually work — correction changes the drafted
+category:** Picked `CLM-9427497`
+(`eb26a343-d30d-4ba3-b6f8-e9cdf5495cb8`), `needs_review`, classification
+`category="coding_error"`, `confidence=0.55`, no appeal. Submitted `POST
+/corrections` changing `classification.category` from `coding_error` to
+`medical_necessity` via the real API (not the UI, for this first pass, to
+isolate the backend logic before testing the UI path). Called `POST
+/denials/{id}/appeal/draft` → `{"status": "appeal_drafted"}`. Then, via a
+**direct DB script** (not the API, per the task instruction):
+`classifications.category` was still `coding_error` (0.55) — confirming
+corrections really are still audit-only and the AI's original output is
+untouched. The new `appeals` row's `draft_text` opens: *"...denied under
+CARC 97... We respectfully disagree with this determination and,
+**consistent with the internal review classifying this denial as a
+medical-necessity matter**, request that Vantage Point Insurance
+reconsider the claim on that basis..."* followed by a `"Clinical Basis for
+Medical Necessity"` section — the string `"coding error"` does not appear
+anywhere in the letter; `"medical necessity"` does. The correction
+concretely changed what the drafted appeal argues.
+
+Ran the same flow a second time through the **real browser UI** (not just
+curl) on a second denial, `CLM-2370834`
+(`21b4998b-ea1c-472b-8168-3e2f962727b8`, no correction filed this time —
+confirming the no-correction/original-category path also still works):
+loaded the detail page, confirmed both "Draft Appeal Letter" (primary) and
+"Reprocess with AI" (secondary) render side by side with distinct labels;
+clicked "Draft Appeal Letter"; confirmed the button/other-button disabled
+state, spinner, and info banner (distinct copy from the reprocess banner —
+explicitly says extraction/classification are not rerun) during the ~40s
+real Anthropic call; after completion, `status` pill changed to "Appeal
+Drafted", the "Draft Appeal Letter" button correctly disappeared (appeal
+now exists), and only "Reprocess with AI" remained — verifying the
+visibility rule updates live via the existing cache invalidation, not just
+on reload. Checked dark mode (`.dark` token palette) and 390px mobile
+width in the browser — both buttons render legibly, wrap cleanly under the
+header on mobile, no overflow, no layout shift. Browser console clean (0
+errors, 0 warnings) across the whole flow — the only console errors seen
+in this session were pre-existing 404s for an unrelated denial id from a
+prior test session, unrelated to this feature.
 
 ## What's next (not built yet)
 

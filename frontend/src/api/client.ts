@@ -88,6 +88,9 @@ export const api = {
   processDenial: (id: string) =>
     request<ProcessResponse>(`/denials/${id}/process`, { method: "POST" }),
 
+  draftAppeal: (id: string) =>
+    request<ProcessResponse>(`/denials/${id}/appeal/draft`, { method: "POST" }),
+
   updateAppealStatus: (id: string, body: AppealStatusUpdateRequest) =>
     request<AppealOut>(`/denials/${id}/appeal/status`, {
       method: "POST",

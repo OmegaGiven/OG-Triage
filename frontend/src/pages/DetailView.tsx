@@ -41,6 +41,14 @@ export function DetailView() {
     },
   });
 
+  const draftAppealMutation = useMutation({
+    mutationFn: () => api.draftAppeal(id!),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["denial", id] });
+      queryClient.invalidateQueries({ queryKey: ["denials"] });
+    },
+  });
+
   const appealStatusMutation = useMutation({
     mutationFn: (status: "approved" | "rejected") =>
       api.updateAppealStatus(id!, { status, reviewer: reviewerName || "reviewer@example.com" }),
@@ -77,6 +85,17 @@ export function DetailView() {
 
   const denial = denialQuery.data!;
   const hasBeenProcessed = denial.status !== "new";
+  const hasClassification = !!denial.classification;
+  const hasAppeal = !!denial.appeal;
+  // Only offer a standalone "Draft Appeal Letter" once there's a
+  // classification to draft from and no appeal yet -- once an appeal
+  // exists, "Reprocess with AI" already covers "regenerate everything
+  // including the appeal", so showing both would be two buttons doing
+  // overlapping things. This is also exactly the needs_review-after-a-
+  // human-correction case this button exists for: a classification is on
+  // record (possibly hand-corrected) but low original confidence meant the
+  // pipeline never reached appeal drafting.
+  const showDraftAppealButton = hasClassification && !hasAppeal;
 
   function handleProcessClick() {
     if (hasBeenProcessed) {
@@ -107,32 +126,66 @@ export function DetailView() {
           </p>
         </div>
 
-        <button
-          className={hasBeenProcessed ? "btn-secondary" : "btn-primary"}
-          disabled={processMutation.isPending}
-          onClick={handleProcessClick}
-        >
-          {processMutation.isPending ? (
-            <>
-              <Spinner className="h-4 w-4" />
-              Processing (this can take 10-30s)…
-            </>
-          ) : hasBeenProcessed ? (
-            <>
-              <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                <path
-                  fillRule="evenodd"
-                  d="M15.312 11.424a5.5 5.5 0 01-9.201 2.466l-.312-.311h2.433a.75.75 0 000-1.5H3.989a.75.75 0 00-.75.75v4.242a.75.75 0 001.5 0v-2.43l.31.31a7 7 0 0011.712-3.138.75.75 0 00-1.449-.39zm1.23-3.723a.75.75 0 00.219-.53V2.929a.75.75 0 00-1.5 0V5.36l-.31-.31A7 7 0 003.239 8.188a.75.75 0 101.448.389A5.5 5.5 0 0113.89 6.11l.311.31h-2.432a.75.75 0 000 1.5h4.243a.75.75 0 00.53-.219z"
-                  clipRule="evenodd"
-                />
-              </svg>
-              Reprocess with AI
-            </>
-          ) : (
-            "Process with AI"
+        <div className="flex flex-wrap items-center gap-2">
+          {showDraftAppealButton && (
+            <button
+              className="btn-primary"
+              disabled={draftAppealMutation.isPending || processMutation.isPending}
+              onClick={() => draftAppealMutation.mutate()}
+            >
+              {draftAppealMutation.isPending ? (
+                <>
+                  <Spinner className="h-4 w-4" />
+                  Drafting appeal…
+                </>
+              ) : (
+                "Draft Appeal Letter"
+              )}
+            </button>
           )}
-        </button>
+
+          <button
+            className={showDraftAppealButton || hasBeenProcessed ? "btn-secondary" : "btn-primary"}
+            disabled={processMutation.isPending || draftAppealMutation.isPending}
+            onClick={handleProcessClick}
+          >
+            {processMutation.isPending ? (
+              <>
+                <Spinner className="h-4 w-4" />
+                Processing (this can take 10-30s)…
+              </>
+            ) : hasBeenProcessed ? (
+              <>
+                <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                  <path
+                    fillRule="evenodd"
+                    d="M15.312 11.424a5.5 5.5 0 01-9.201 2.466l-.312-.311h2.433a.75.75 0 000-1.5H3.989a.75.75 0 00-.75.75v4.242a.75.75 0 001.5 0v-2.43l.31.31a7 7 0 0011.712-3.138.75.75 0 00-1.449-.39zm1.23-3.723a.75.75 0 00.219-.53V2.929a.75.75 0 00-1.5 0V5.36l-.31-.31A7 7 0 003.239 8.188a.75.75 0 101.448.389A5.5 5.5 0 0113.89 6.11l.311.31h-2.432a.75.75 0 000 1.5h4.243a.75.75 0 00.53-.219z"
+                    clipRule="evenodd"
+                  />
+                </svg>
+                Reprocess with AI
+              </>
+            ) : (
+              "Process with AI"
+            )}
+          </button>
+        </div>
       </div>
+
+      {draftAppealMutation.isPending && (
+        <div className="mb-6 flex items-center gap-3 rounded-lg border border-brand-200 bg-brand-50 px-4 py-3 text-sm text-brand-800">
+          <Spinner className="h-4 w-4 text-brand-600" />
+          Drafting an appeal from the current classification (including any human
+          correction on record) — extraction and classification are not rerun. This can
+          take up to 30 seconds.
+        </div>
+      )}
+
+      {draftAppealMutation.isError && (
+        <div className="mb-6 rounded-lg border border-status-rejected/30 bg-status-rejected-bg px-4 py-3 text-sm text-status-rejected-fg">
+          Appeal drafting failed: {(draftAppealMutation.error as Error).message}
+        </div>
+      )}
 
       {processMutation.isPending && (
         <div className="mb-6 flex items-center gap-3 rounded-lg border border-brand-200 bg-brand-50 px-4 py-3 text-sm text-brand-800">

@@ -180,6 +180,27 @@ def process_denial(denial_id: uuid.UUID, db: Session = Depends(get_db)) -> Proce
     return ProcessResponse(denial_id=denial_id, status=status)
 
 
+@router.post("/{denial_id}/appeal/draft", response_model=ProcessResponse)
+def draft_appeal_for_denial(denial_id: uuid.UUID, db: Session = Depends(get_db)) -> ProcessResponse:
+    """Runs *only* the appeal-drafting stage against this denial's current
+    (most recent) extraction and classification rows -- does not touch
+    extraction or classification. Distinct from POST /process, which reruns
+    the full pipeline (and would overwrite a human classification
+    correction just to get a fresh appeal). See
+    pipeline.run.draft_appeal_only for how a classification.category
+    correction, if one has been logged, is folded into the appeal prompt
+    without mutating the classifications row. Makes a real Anthropic API
+    call -- real cost."""
+    from pipeline.run import draft_appeal_only
+
+    _get_denial_or_404(db, denial_id)
+    try:
+        status = draft_appeal_only(denial_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ProcessResponse(denial_id=denial_id, status=status)
+
+
 @router.post("/{denial_id}/appeal/status", response_model=AppealOut)
 def update_appeal_status(
     denial_id: uuid.UUID, body: AppealStatusUpdateRequest, db: Session = Depends(get_db)
@@ -216,7 +237,17 @@ def create_correction(
     """Logs a human correction to an AI-produced field -- the compliance
     audit-trail feature. Does not mutate the corrected field itself
     (extraction/classification/appeal rows are left as the AI produced
-    them); this only appends an audit row."""
+    them); this only appends an audit row.
+
+    One deliberate exception to "audit-only, no downstream effect": when
+    field_corrected="classification.category", POST /{denial_id}/appeal/draft
+    (pipeline.run.draft_appeal_only) looks up the most recent such
+    correction and uses its new_value -- not the classifications row's
+    original category -- when building the appeal-drafting prompt. This is
+    the only place a correction ever influences behavior; the
+    classifications row itself is still never overwritten, so the AI's
+    original output and the audit trail both stay intact. See
+    draft_appeal_only's docstring for the full rationale."""
     _get_denial_or_404(db, denial_id)
 
     correction = Correction(
