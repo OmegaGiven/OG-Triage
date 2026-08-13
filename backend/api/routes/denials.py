@@ -205,7 +205,7 @@ def draft_appeal_for_denial(denial_id: uuid.UUID, db: Session = Depends(get_db))
 def update_appeal_status(
     denial_id: uuid.UUID, body: AppealStatusUpdateRequest, db: Session = Depends(get_db)
 ) -> AppealOut:
-    _get_denial_or_404(db, denial_id)
+    denial = _get_denial_or_404(db, denial_id)
 
     if body.status not in APPEAL_STATUSES:
         raise HTTPException(
@@ -225,6 +225,13 @@ def update_appeal_status(
     appeal.status = body.status
     appeal.reviewer = body.reviewer
     appeal.reviewed_at = datetime.now(timezone.utc)
+    # Mirror the review decision onto the denial's own status so the queue
+    # list (which only shows denials.status, not the nested appeal) reflects
+    # it too -- "approved"/"rejected" are valid denial_status enum values for
+    # exactly this. "sent" has no denial-level equivalent (it's a downstream
+    # state of an already-approved appeal), so it doesn't touch denial.status.
+    if body.status in ("approved", "rejected"):
+        denial.status = body.status
     db.commit()
     db.refresh(appeal)
     return appeal
