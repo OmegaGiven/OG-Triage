@@ -101,6 +101,14 @@ export interface ProcessResponse {
   status: string;
 }
 
+export interface DenialCreateRequest {
+  source_company: string;
+  raw_text: string;
+  payer?: string | null;
+  claim_ref?: string | null;
+  received_at?: string | null;
+}
+
 export interface AppealStatusUpdateRequest {
   status: string;
   reviewer: string;

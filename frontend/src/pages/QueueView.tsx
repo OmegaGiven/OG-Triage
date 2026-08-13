@@ -56,6 +56,9 @@ export function QueueView() {
             Review incoming claim denials, run AI triage, and manage appeal drafts.
           </p>
         </div>
+        <button className="btn-primary shrink-0" onClick={() => navigate("/denials/new")}>
+          New Denial
+        </button>
       </div>
 
       <div className="mb-4 flex flex-wrap items-center gap-3">

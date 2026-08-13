@@ -4,6 +4,7 @@ import { QueueView } from "./pages/QueueView";
 import { DetailView } from "./pages/DetailView";
 import { DashboardView } from "./pages/DashboardView";
 import { ProfilesView } from "./pages/ProfilesView";
+import { NewDenialView } from "./pages/NewDenialView";
 
 const NAV_LINKS = [
   { to: "/", label: "Queue", match: (p: string) => p === "/" || p.startsWith("/denials") },
@@ -198,6 +199,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Navigate to="/denials" replace />} />
           <Route path="/denials" element={<QueueView />} />
+          <Route path="/denials/new" element={<NewDenialView />} />
           <Route path="/denials/:id" element={<DetailView />} />
           <Route path="/dashboard" element={<DashboardView />} />
           <Route path="/profiles" element={<ProfilesView />} />

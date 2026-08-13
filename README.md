@@ -1,13 +1,15 @@
 # Gauge AI Automations — Claims Denial Triage + Appeal Drafting
 
-**Status: Phase 1-10 done.** This repo holds a pipeline that ingests insurance
-claim-denial letters, extracts structured fields, classifies the denial
-reason, and drafts an appeal letter, with a Postgres-backed audit trail and a
-deterministic eval/regression harness. The pipeline is profile-driven and
-currently drives two portfolio companies' claim types (eye-care and DME) off
-one shared codebase, is exposed over a FastAPI REST layer, and is reviewable
-through a React/TypeScript queue + detail UI with a monitoring dashboard and
-a live, side-by-side multi-company demo.
+**Status: Phase 1-10 done, plus manual denial creation.** This repo holds a
+pipeline that ingests insurance claim-denial letters, extracts structured
+fields, classifies the denial reason, and drafts an appeal letter, with a
+Postgres-backed audit trail and a deterministic eval/regression harness. The
+pipeline is profile-driven and currently drives two portfolio companies'
+claim types (eye-care and DME) off one shared codebase, is exposed over a
+FastAPI REST layer, and is reviewable through a React/TypeScript queue +
+detail UI with a monitoring dashboard, a live, side-by-side multi-company
+demo, and a "New Denial" flow for pasting in a real denial letter live (see
+"Manual denial creation" below).
 
 - **Phase 1** — the Postgres schema (`denials`, `extractions`,
   `classifications`, `appeals`, `corrections`, `eval_runs`, `token_usage`),
@@ -101,6 +103,7 @@ app/
         DetailView.tsx                 # the reviewer workspace (see below)
         DashboardView.tsx              # Phase 7: eval/confidence/usage monitoring dashboard
         ProfilesView.tsx                # Phase 8: multi-company profile comparison + live demo
+        NewDenialView.tsx                # manual "New Denial" create form (/denials/new)
       App.tsx                       # routing + top nav
       index.css                     # design system (Tailwind v4 @theme block)
     .env.example
@@ -1064,6 +1067,69 @@ actual browser via Playwright at 390px and 1920px, in both themes:
 - `npx tsc -b --noEmit`, `npx oxlint`, and `npm run build` all clean.
 
 No backend code was touched for this phase.
+
+## Manual denial creation ("New Denial")
+
+Before this, the only denials in the system were the 62 pre-seeded synthetic
+ones, plus a "Demo Tools" reset on `/profiles` (Phase 8) that resets an
+already-processed denial back to `status="new"` so there's something to run
+"Process with AI" against live. That's still there and still useful, but it
+means a live demo (e.g. a recorded walkthrough) could only reprocess canned
+data, never a genuinely new example typed or pasted in on the spot.
+
+- **Backend** — `POST /api/denials` (`backend/api/routes/denials.py`),
+  request body `DenialCreateRequest` (`backend/api/schemas.py`):
+  `source_company` (required, must be a key registered in
+  `backend/profiles/__init__.py`'s `PROFILES`, else `400`) and `raw_text`
+  (required, non-empty). `payer` and `claim_ref` are `NOT NULL` columns on
+  `denials` but optional in the request — omitted `payer` becomes `"Unknown
+  (manual entry)"`, omitted `claim_ref` becomes `MANUAL-{8 hex chars}` (a
+  fresh UUID prefix), both obviously placeholder values, never
+  fabricated-looking real ones. `received_at` defaults to now if omitted.
+  `status` is not settable by the caller — every manually-created denial
+  starts at `"new"`, so the existing "Process with AI" button on the detail
+  view (Phase 6) has something to do. Returns the same `DenialListItem`
+  shape the queue list endpoint uses.
+- **Frontend** — a "New Denial" button on the Queue view header
+  (`frontend/src/pages/QueueView.tsx`) opens a dedicated route,
+  `/denials/new` (`frontend/src/pages/NewDenialView.tsx`) — a form page
+  rather than a modal, since the primary field (raw denial text) needs a
+  large textarea that a modal would cramp. Fields: company (dropdown,
+  `GET /api/profiles`, same source as the Queue's company filter), denial
+  letter text (large, prominent `textarea`, the primary/required field),
+  and optional payer / claim ref inputs with placeholder text that makes
+  the auto-generated-default behavior explicit. Submit calls the new
+  `api.createDenial()` (`frontend/src/api/client.ts`); on success, navigates
+  straight to `/denials/{new_id}` — the existing detail view and its
+  "Process with AI" button, untouched. Submit-in-flight and error states
+  follow the same pattern as `CorrectionForm`/`ProfilesView`'s demo-reset
+  button (disabled button + "Creating…" label; error text rendered inline,
+  not swallowed).
+
+### Verification
+
+Killed a stale `uvicorn`/`vite` pair left running from a prior session,
+started exactly one of each fresh, then drove the full flow in an actual
+browser via Playwright: opened `/denials`, clicked "New Denial", picked
+"Comprehensive EyeCare Partners," pasted in a realistic fake denial letter
+(medical-necessity denial for CPT 92134 posterior-segment OCT imaging,
+CARC CO-50, no physician name/NPI/diagnosis code included on purpose),
+left payer/claim ref blank, and submitted. Landed on `/denials/{id}` with
+claim ref auto-generated as `MANUAL-3187decf` and payer
+`"Unknown (manual entry)"`, status `New`. Clicked "Process with AI" and
+confirmed a real ~20s Anthropic API round trip: extraction correctly pulled
+`cpt_code: "92134"`, `carc_code: "50"`, `payer_name`, `billed_amount`, etc.
+(leaving `physician_npi`/`diagnosis_code`/`physician_name` as `<UNKNOWN>`,
+correctly, since the test letter never stated them), classification landed
+on `medical_necessity` at 97% confidence, and the denial correctly routed
+to `needs_review` rather than drafting an appeal (missing required
+grounding fields) — genuine pipeline behavior, not a bug in the new
+create flow. Confirmed the new record shows up in the Queue (`total` went
+from 62 to 63, sorted to the top by `received_at`). Checked the new
+`/denials/new` form in both light and dark theme (computed background/text
+colors sampled directly, not just eyeballed) and at 390px mobile width (no
+horizontal overflow, mobile hamburger nav intact). Browser console clean
+(0 errors, 0 warnings) throughout.
 
 ## What's next (not built yet)
 

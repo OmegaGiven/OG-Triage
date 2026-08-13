@@ -5,7 +5,9 @@ import type {
   CorrectionCreateRequest,
   CorrectionOut,
   DemoResetOut,
+  DenialCreateRequest,
   DenialDetail,
+  DenialListItem,
   DenialListResponse,
   EvalRunOut,
   ProcessResponse,
@@ -76,6 +78,12 @@ export const api = {
     request<DenialListResponse>(`/denials${toQuery(asRecord(params))}`),
 
   getDenial: (id: string) => request<DenialDetail>(`/denials/${id}`),
+
+  createDenial: (body: DenialCreateRequest) =>
+    request<DenialListItem>(`/denials`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 
   processDenial: (id: string) =>
     request<ProcessResponse>(`/denials/${id}/process`, { method: "POST" }),

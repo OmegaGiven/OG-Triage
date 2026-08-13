@@ -104,6 +104,21 @@ class ProcessResponse(BaseModel):
     status: str
 
 
+class DenialCreateRequest(BaseModel):
+    """Manual create-a-denial request, e.g. pasting in a real denial letter
+    live for a demo. `payer`/`claim_ref` are DB-required columns but
+    deliberately optional here (auto-generated placeholders if omitted) so
+    the flow is fast to use live -- `status` is not settable; every
+    manually-created denial starts at "new" so the existing "Process with
+    AI" button on the detail view has something to do."""
+
+    source_company: str = Field(min_length=1, description="Must match a registered CompanyProfile key")
+    raw_text: str = Field(min_length=1)
+    payer: str | None = None
+    claim_ref: str | None = None
+    received_at: datetime.datetime | None = None
+
+
 class AppealStatusUpdateRequest(BaseModel):
     status: str = Field(description="One of: approved, rejected, sent")
     reviewer: str = Field(min_length=1)

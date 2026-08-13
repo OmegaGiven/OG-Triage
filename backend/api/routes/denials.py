@@ -16,12 +16,14 @@ from api.schemas import (
     AppealStatusUpdateRequest,
     CorrectionCreateRequest,
     CorrectionOut,
+    DenialCreateRequest,
     DenialDetail,
     DenialListItem,
     DenialListResponse,
     ProcessResponse,
 )
 from db.models import Appeal, Classification, Correction, Denial, Extraction
+from profiles import PROFILES
 
 router = APIRouter(prefix="/api/denials", tags=["denials"])
 
@@ -77,6 +79,44 @@ def list_denials(
     ]
 
     return DenialListResponse(items=items, total=total, page=page, page_size=page_size)
+
+
+@router.post("", response_model=DenialListItem, status_code=201)
+def create_denial(body: DenialCreateRequest, db: Session = Depends(get_db)) -> DenialListItem:
+    """Manual create -- the live-demo "paste in a real denial letter"
+    flow. Always lands as status="new" so the existing "Process with AI"
+    button (detail view) has something to run against. `payer`/`claim_ref`
+    are DB-required columns but optional here for a fast paste-and-go demo
+    -- unset ones get obviously-a-placeholder defaults, never silently
+    fabricated-looking real-seeming values."""
+    if body.source_company not in PROFILES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"unknown source_company={body.source_company!r}. Known profiles: {sorted(PROFILES)}",
+        )
+
+    denial = Denial(
+        source_company=body.source_company,
+        raw_text=body.raw_text,
+        payer=body.payer or "Unknown (manual entry)",
+        claim_ref=body.claim_ref or f"MANUAL-{uuid.uuid4().hex[:8]}",
+        received_at=body.received_at or datetime.now(timezone.utc),
+        status="new",
+    )
+    db.add(denial)
+    db.commit()
+    db.refresh(denial)
+
+    return DenialListItem(
+        id=denial.id,
+        source_company=denial.source_company,
+        status=denial.status,
+        payer=denial.payer,
+        claim_ref=denial.claim_ref,
+        received_at=denial.received_at,
+        has_classification=False,
+        has_appeal=False,
+    )
 
 
 @router.get("/{denial_id}", response_model=DenialDetail)
