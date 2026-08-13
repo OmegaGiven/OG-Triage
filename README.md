@@ -1,6 +1,6 @@
 # Gauge AI Automations — Claims Denial Triage + Appeal Drafting
 
-**Status: Phase 1-10 done, plus manual denial creation.** This repo holds a
+**Status: Phase 1-10 done, plus manual denial creation and reprocess-from-detail-view.** This repo holds a
 pipeline that ingests insurance claim-denial letters, extracts structured
 fields, classifies the denial reason, and drafts an appeal letter, with a
 Postgres-backed audit trail and a deterministic eval/regression harness. The
@@ -1130,6 +1130,73 @@ from 62 to 63, sorted to the top by `received_at`). Checked the new
 colors sampled directly, not just eyeballed) and at 390px mobile width (no
 horizontal overflow, mobile hamburger nav intact). Browser console clean
 (0 errors, 0 warnings) throughout.
+
+## Reprocess with AI (detail view)
+
+Before this, the detail view's "Process with AI" button (Phase 6) only
+rendered when a denial's `status === "new"` — once a denial had gone
+through extraction/classification/appeal drafting, the only way to run the
+pipeline against it again was the `/profiles` "Demo Tools" reset hack
+(Phase 8), which hard-deletes the prior run's rows first and is scoped to
+one deterministic denial per company, not any denial a user is looking at.
+
+Investigated `POST /api/denials/{id}/process`
+(`backend/pipeline/run.py`'s `process_denial_by_id` /`process_denial`)
+before changing anything: it never checks or requires `status="new"` —
+it just sets `status="processing"` and re-runs extract → classify →
+draft_appeal, and each stage (`pipeline/extract.py`, `classify.py`,
+`draft_appeal.py`) always `INSERT`s a fresh row rather than upserting.
+`GET /api/denials/{id}` (`backend/api/routes/denials.py`) already selects
+the extraction/classification/appeal by `ORDER BY created_at DESC LIMIT 1`,
+so a second pipeline run on an already-processed denial "just works" today
+— older rows are left in the table (same as the demo-reset flow's
+non-deleting sibling path) but the API and detail view only ever surface
+the latest. **No backend changes were needed or made.**
+
+- **Frontend only** — `frontend/src/pages/DetailView.tsx`: the process
+  button now always renders, regardless of `denial.status`. Label and style
+  switch on whether the denial already has results
+  (`status !== "new"`): first run keeps the original `btn-primary` "Process
+  with AI"; reprocessing an already-processed denial shows a distinct
+  `btn-secondary` "Reprocess with AI" (with a refresh icon) so it doesn't
+  read as identical to a first-time action. Reprocessing also goes through
+  a `window.confirm()` first, spelling out concretely what will change
+  (new extraction/classification/appeal, and — since `draft_appeal.py`
+  always inserts a fresh `Appeal` row with `status="draft"` — any existing
+  human approval/rejection on the current appeal gets superseded rather
+  than carried over) before firing the mutation. Cancelling the confirm
+  fires nothing. The existing "Processing…" banner, disabled-button
+  spinner state, and React Query cache invalidation
+  (`["denial", id]` + `["denials"]`) on the mutation used by the original
+  button are unchanged and unconditionally cover the reprocess path too —
+  no new loading UX or cache logic needed.
+
+### Verification
+
+Confirmed exactly one `uvicorn` (port 8000) and one `vite` (port 5173)
+already running from a prior session (no stale duplicates). Picked an
+already-`appeal_drafted` denial from seed data, `CLM-1263973`
+(`62c8a4f9-93f6-4e66-8d3a-800013a51b01`, Comprehensive EyeCare Partners),
+noted its state via the API first: classification `missing_information`
+at 75% confidence, appeal `status="approved"`. Clicked "Reprocess with AI"
+in a real browser via Playwright, confirmed the `window.confirm()` dialog
+text, accepted it, confirmed the "Processing (this can take 10-30s)…"
+button/banner state matched the original flow exactly, and waited for a
+real ~40s Anthropic API round trip. After completion: classification came
+back the same (`missing_information`, 75% — a genuine re-run landing on
+the same answer, not a fluke; both extraction and classification got new
+DB row ids), but the appeal text changed (different letter date, reworded
+opening) and — most importantly — `appeal.status` reset to `"draft"`,
+proving a brand-new `Appeal` row was inserted rather than the old
+`"approved"` one being reused or displayed stale. Re-clicked "Reprocess
+with AI" and confirmed cancelling the dialog fires no mutation (button
+stays idle, no network call). Checked dark mode (`.dark` class + real
+per-token colors, not a filter) and 390px mobile width — button renders
+legibly in both, wraps to its own row under the header on mobile, no
+overflow. Also created and deleted a throwaway `status="new"` denial via
+`POST /api/denials` to confirm the original first-run "Process with AI"
+button (primary style, no confirm dialog) is unchanged. Browser console
+clean (0 errors, 0 warnings) throughout.
 
 ## What's next (not built yet)
 
