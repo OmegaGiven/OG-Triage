@@ -54,6 +54,34 @@ logger = logging.getLogger("pipeline.run")
 CONFIDENCE_THRESHOLD = 0.7
 
 
+def _log_ai_action(db, denial: Denial, *, stage: str, summary: str, notes: str | None = None) -> None:
+    """Append an event_type="ai_action" row to the unified audit-event log
+    (see db.models.AuditEvent) right after a pipeline stage succeeds, so the
+    Audit History timeline tells the whole story -- AI extracted -> AI
+    classified -> AI drafted -> human corrected -> human approved -- not just
+    the human half of it. Does not commit; the caller owns the transaction
+    boundary, same as every other write in this module.
+
+    `stage` is the pipeline stage key ("extraction" | "classification" |
+    "appeal_drafting") stored in field_corrected. old_value is always "" --
+    there's no "previous value" for a stage running for the first time, this
+    is a creation event, not an edit. corrected_by is always the literal
+    string "AI", which is what the frontend keys off of to badge these
+    events as system-originated rather than human-originated.
+    """
+    db.add(
+        AuditEvent(
+            denial_id=denial.id,
+            event_type="ai_action",
+            field_corrected=stage,
+            old_value="",
+            new_value=summary,
+            corrected_by="AI",
+            notes=notes,
+        )
+    )
+
+
 def process_denial(db, denial: Denial) -> str:
     """Run one denial through the full pipeline. Commits after every status
     transition so a crash mid-pipeline leaves the denial in whatever state
@@ -71,7 +99,13 @@ def process_denial(db, denial: Denial) -> str:
         denial.status = "needs_review"
         db.commit()
         return denial.status
-    db.commit()  # persist the successful extraction row + token_usage row
+    _log_ai_action(
+        db, denial,
+        stage="extraction",
+        summary="Processed denial letter",
+        notes=f"Extracted {len(extraction.data)} field(s) from the denial letter.",
+    )
+    db.commit()  # persist the successful extraction row + token_usage row + ai_action event
 
     classification = classify_denial(db, denial, extraction.data, profile)
     if not classification.success:
@@ -79,9 +113,15 @@ def process_denial(db, denial: Denial) -> str:
         denial.status = "needs_review"
         db.commit()
         return denial.status
+    _log_ai_action(
+        db, denial,
+        stage="classification",
+        summary=f"Classified as {classification.data['category']}",
+        notes=f"Confidence {classification.data['confidence']:.2f}.",
+    )
 
     denial.status = "classified"
-    db.commit()  # persist the classification row + token_usage row + status
+    db.commit()  # persist the classification row + token_usage row + status + ai_action event
 
     confidence = classification.data["confidence"]
     category = classification.data["category"]
@@ -100,6 +140,12 @@ def process_denial(db, denial: Denial) -> str:
         denial.status = "needs_review"
         db.commit()
         return denial.status
+    _log_ai_action(
+        db, denial,
+        stage="appeal_drafting",
+        summary="Drafted appeal",
+        notes=f"Draft length {len(appeal.draft_text)} character(s).",
+    )
 
     denial.status = "appeal_drafted"
     db.commit()
@@ -226,6 +272,12 @@ def draft_appeal_only(denial_id: uuid.UUID | str) -> str:
         if not result.success:
             db.rollback()
             raise ValueError(f"appeal drafting failed: {result.error}")
+        _log_ai_action(
+            db, denial,
+            stage="appeal_drafting",
+            summary="Drafted appeal",
+            notes=f"Draft length {len(result.draft_text)} character(s).",
+        )
 
         denial.status = "appeal_drafted"
         db.commit()

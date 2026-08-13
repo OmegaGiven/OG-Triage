@@ -71,13 +71,19 @@ class AppealOut(BaseModel):
 
 
 class AuditEventOut(BaseModel):
-    """One row of the unified, immutable audit-event log: either a human
-    correction to an AI-produced field, or an appeal approve/reject/sent
-    review decision (see `event_type`). Both shapes reuse the same
-    field_corrected/old_value/new_value/corrected_by columns -- for
-    event_type="appeal_review", field_corrected is always "appeal.status",
-    old_value/new_value are the previous/new appeal status, corrected_by is
-    the reviewer, and appeal_id identifies which Appeal row it was about."""
+    """One row of the unified, immutable audit-event log: a human correction
+    to an AI-produced field, an appeal approve/reject/sent review decision,
+    or a successful AI pipeline action (see `event_type`). All three shapes
+    reuse the same field_corrected/old_value/new_value/corrected_by columns:
+      - event_type="appeal_review": field_corrected is always "appeal.status",
+        old_value/new_value are the previous/new appeal status, corrected_by
+        is the reviewer, and appeal_id identifies which Appeal row it was
+        about.
+      - event_type="ai_action": field_corrected is the pipeline stage key
+        ("extraction" | "classification" | "appeal_drafting"), old_value is
+        always "", new_value is a short summary of what the AI produced, and
+        corrected_by is always the literal string "AI" -- the frontend badges
+        these events as system-originated based on that value."""
 
     model_config = ConfigDict(from_attributes=True)
 

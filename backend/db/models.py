@@ -163,21 +163,23 @@ class Appeal(Base):
     __table_args__ = (Index("ix_appeals_denial_id", "denial_id"),)
 
 
-AUDIT_EVENT_TYPES = ("correction", "appeal_review")
+AUDIT_EVENT_TYPES = ("correction", "appeal_review", "ai_action")
 
 
 class AuditEvent(Base):
-    """Immutable, append-only compliance audit trail: every human action worth a
-    permanent record on a denial -- a correction to an AI-produced field, or an
-    appeal approve/reject/sent review decision. Rows are INSERT-only; nothing
-    here is ever updated or deleted in normal operation, which is the whole
-    point (see `Appeal.status`/`reviewer`/`reviewed_at`, which DO get
-    overwritten in place to show "current state" -- this table is the
-    permanent history those mutable fields don't preserve).
+    """Immutable, append-only compliance + provenance audit trail: every
+    action worth a permanent record on a denial -- human corrections to an
+    AI-produced field, human appeal approve/reject/sent review decisions,
+    AND the AI pipeline's own successful actions (extraction, classification,
+    appeal drafting). Rows are INSERT-only; nothing here is ever updated or
+    deleted in normal operation, which is the whole point (see
+    `Appeal.status`/`reviewer`/`reviewed_at`, which DO get overwritten in
+    place to show "current state" -- this table is the permanent history
+    those mutable fields don't preserve).
 
-    One wider table with two event shapes, distinguished by `event_type`,
-    rather than two separate tables, because the shapes turned out to share
-    the same four columns cleanly:
+    One wider table with three event shapes, distinguished by `event_type`,
+    rather than separate tables, because the shapes turned out to share the
+    same four columns cleanly:
       - event_type="correction": field_corrected/old_value/new_value describe
         what changed (e.g. "classification.category"), corrected_by is who
         made the fix. Unchanged from the original `corrections` table.
@@ -186,9 +188,23 @@ class AuditEvent(Base):
         (draft -> approved, etc.), corrected_by is the reviewer, and
         `appeal_id` records which Appeal row (there can be more than one per
         denial after a reprocess) the decision was about.
+      - event_type="ai_action": logged by backend/pipeline/run.py right after
+        a pipeline stage succeeds, so the timeline tells the whole story --
+        AI extracted -> AI classified -> AI drafted -> human corrected ->
+        human approved -- not just the human half of it. field_corrected is
+        the stage key ("extraction" | "classification" | "appeal_drafting"),
+        old_value is always "" (there's no "previous value" for a stage
+        running -- this is a creation event, not an edit), new_value is a
+        short human-readable summary of what the AI produced (e.g. "Processed
+        denial letter", "Classified as medical_necessity", "Drafted appeal"),
+        corrected_by is always the literal string "AI" (never a person's
+        name -- that's what the frontend keys off of to badge these events
+        as system-originated rather than human-originated), and `notes`
+        carries extra detail (confidence score, field count, draft length).
     Table name stayed `corrections` (rather than renaming to `audit_events`)
-    to keep the migration that extended it a pure ADD COLUMN, not a rename --
-    see alembic/versions for the migration that added event_type/appeal_id.
+    to keep the migrations that extended it pure ADD COLUMN / ADD VALUE, not
+    a rename -- see alembic/versions for the migrations that added
+    event_type/appeal_id and, later, the "ai_action" event_type value.
     """
 
     __tablename__ = "corrections"

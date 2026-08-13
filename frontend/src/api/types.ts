@@ -71,14 +71,18 @@ export interface AppealOut {
   created_at: string;
 }
 
-export const AUDIT_EVENT_TYPES = ["correction", "appeal_review"] as const;
+export const AUDIT_EVENT_TYPES = ["correction", "appeal_review", "ai_action"] as const;
 export type AuditEventType = (typeof AUDIT_EVENT_TYPES)[number];
 
-/** One row of the unified, immutable audit-event log -- either a human
- * correction to an AI-produced field, or an appeal approve/reject/sent
- * review decision (see event_type). For event_type="appeal_review",
- * field_corrected is always "appeal.status", old_value/new_value are the
- * previous/new appeal status, and corrected_by is the reviewer. */
+/** One row of the unified, immutable audit-event log -- a human correction
+ * to an AI-produced field, an appeal approve/reject/sent review decision, or
+ * a successful AI pipeline action (see event_type). For
+ * event_type="appeal_review", field_corrected is always "appeal.status",
+ * old_value/new_value are the previous/new appeal status, and corrected_by
+ * is the reviewer. For event_type="ai_action", field_corrected is the
+ * pipeline stage key ("extraction" | "classification" | "appeal_drafting"),
+ * old_value is always "", new_value is a short summary of what the AI
+ * produced, and corrected_by is always the literal string "AI". */
 export interface AuditEventOut {
   id: number;
   event_type: AuditEventType;

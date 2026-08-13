@@ -1,8 +1,10 @@
 # Gauge AI Automations — Claims Denial Triage + Appeal Drafting
 
 **Status: Phase 1-10 done, plus manual denial creation, reprocess-from-detail-view,
-and a unified immutable audit-event log covering both corrections and appeal-review
-decisions (see "Audit history — a unified, immutable event log" below).** This repo holds a
+and a unified immutable audit-event log covering corrections, appeal-review
+decisions, AND the AI pipeline's own extraction/classification/appeal-drafting
+actions (see "Audit history — a unified, immutable event log" and "AI-action
+audit events" below).** This repo holds a
 pipeline that ingests insurance claim-denial letters, extracts structured
 fields, classifies the denial reason, and drafts an appeal letter, with a
 Postgres-backed audit trail and a deterministic eval/regression harness. The
@@ -1436,6 +1438,100 @@ header on mobile, no overflow, no layout shift. Browser console clean (0
 errors, 0 warnings) across the whole flow — the only console errors seen
 in this session were pre-existing 404s for an unrelated denial id from a
 prior test session, unrelated to this feature.
+
+## AI-action audit events (detail view)
+
+### The problem
+
+The unified Audit History timeline (see "Audit history — a unified,
+immutable event log" above) logged the human half of a denial's story —
+corrections and appeal-review decisions — but not the AI half. A reviewer
+looking at a denial's history saw "human corrected classification.category"
+and "human approved the appeal," with no record that extraction,
+classification, and appeal drafting ever ran, or when. The timeline told
+half a story.
+
+### What changed
+
+`AuditEvent`/`corrections` (`backend/db/models.py`) gained a third
+`event_type`: **`"ai_action"`**. `AUDIT_EVENT_TYPES` is now
+`("correction", "appeal_review", "ai_action")`. Postgres enum extended via
+`backend/alembic/versions/b8830a7ff9c5_ai_action_audit_events.py`
+(`ALTER TYPE audit_event_type ADD VALUE IF NOT EXISTS 'ai_action'` — no new
+columns needed, since `ai_action` events reuse the same four columns the
+other two shapes already share):
+
+- `field_corrected` — the pipeline stage key: `"extraction"` |
+  `"classification"` | `"appeal_drafting"`.
+- `old_value` — always `""`. There's no "previous value" for a stage
+  running for the first time; this is a creation event, not an edit.
+- `new_value` — a short human-readable summary of what the AI produced,
+  e.g. `"Processed denial letter"`, `"Classified as medical_necessity"`,
+  `"Drafted appeal"`.
+- `corrected_by` — always the literal string `"AI"`, never a person's name.
+  This is what the frontend keys off of to badge the event as
+  system-originated rather than human-originated.
+- `notes` — extra detail: field count for extraction, confidence score for
+  classification, draft length for appeal drafting.
+
+**Where they're inserted:** `backend/pipeline/run.py` gained a
+`_log_ai_action(db, denial, stage=..., summary=..., notes=...)` helper
+(does not commit — same transaction-boundary convention as the rest of the
+module) called right after each stage succeeds:
+
+- `process_denial` — after `extract_denial` succeeds (before the
+  extraction/token-usage commit), after `classify_denial` succeeds (before
+  the classification/status commit — logged regardless of whether the
+  confidence check that follows routes the denial to `needs_review`, since
+  classification genuinely did succeed), and after `draft_appeal` succeeds
+  (before the `appeal_drafted` status commit).
+- `draft_appeal_only` (the standalone "Draft Appeal Letter" endpoint) —
+  after `draft_appeal` succeeds, same as the full pipeline's appeal-drafting
+  event.
+
+Failures are not logged as `ai_action` events — each stage's failure path
+already routes the denial to `needs_review` and records the error on the
+stage's own row (`Extraction.extracted_fields`, etc.), so a failed stage
+still leaves a trace; this feature is additive on top of that, focused on
+the success-path story per the task brief.
+
+**API/frontend:** no new endpoint or type needed — `ai_action` rows flow
+through the existing `GET /api/denials/{id}` → `audit_events` list exactly
+like `correction`/`appeal_review` rows (`AuditEventOut`,
+`backend/api/schemas.py`; `AuditEventType`, `frontend/src/api/types.ts`).
+`DetailView.tsx` adds a third rendering branch: a gray "AI action" pill
+(`bg-status-new-bg`/`text-status-new-fg` — the same neutral/dark-mode-aware
+tokens the "new" denial-status pill uses, reused here rather than adding a
+new color, consistent with how "Correction" already reuses
+`status-classified` blue and "Appeal review" reuses `status-sent` cyan) with
+a small sparkles icon, `new_value` as the headline, and `notes` underneath —
+visually distinct from both existing badges, reading as "the system did
+this automatically" rather than a human decision.
+
+### Verification
+
+Ran the real pipeline end to end via the UI: `POST /api/demo/reset-sample`
+gave a clean-slate `status="new"` denial (`CLM-1199775`,
+`7ea8e789-85b1-46be-b386-09e9778b4261`) with zero audit events. Clicked
+"Process with AI" in the browser and polled the API until it reached
+`appeal_drafted`. Resulting Audit History, newest first:
+
+1. `ai_action` — "Drafted appeal" (`Draft length 2927 character(s).`)
+2. `ai_action` — "Classified as eligibility" (`Confidence 0.95.`)
+3. `ai_action` — "Processed denial letter" (`Extracted 14 field(s)...`)
+
+— i.e. chronologically extraction → classification → appeal drafting, each
+correctly badged "AI action" in gray with the sparkles icon, distinct from
+the blue "Correction" and cyan "Appeal review" badges. Then logged a real
+correction (`classification.category`: `eligibility` → `medical_necessity`)
+and approved the appeal through the UI on the same denial, producing a
+five-event mixed timeline — `appeal_review` → `correction` → `ai_action` ×3
+— confirming AI and human events interleave correctly in one chronological
+list: AI extracted → AI classified → AI drafted → human corrected → human
+approved, exactly the story this feature set out to tell. Checked both
+light and dark theme and 390px mobile width — badge, icon, and layout all
+render legibly with no wrapping or overflow issues in any combination.
+Browser console clean (0 errors, 0 warnings) throughout.
 
 ## What's next (not built yet)
 
