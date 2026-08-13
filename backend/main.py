@@ -27,14 +27,14 @@ app = FastAPI(
 )
 
 # Permissive local-dev CORS: a Vite React+TS dev server defaults to
-# http://localhost:5173. Both localhost and 127.0.0.1 are allowed since
-# browsers treat them as distinct origins.
+# http://localhost:5173, but Vite silently picks the next free port
+# (5174, 5175, ...) if 5173 is already taken by something else on the
+# machine -- a hardcoded single-port allowlist breaks the moment that
+# happens. Matching any localhost/127.0.0.1 port via regex is more
+# robust for local dev than trying to guess/pin one port number.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1):\d+",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
