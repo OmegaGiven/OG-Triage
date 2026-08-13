@@ -137,39 +137,41 @@ export function QueueView() {
       {denialsQuery.isSuccess && denialsQuery.data.items.length > 0 && (
         <>
           <div className="card overflow-hidden">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-ink-200 bg-ink-50/60 text-left text-xs font-semibold uppercase tracking-wide text-ink-500">
-                  <th className="px-5 py-3">Status</th>
-                  <th className="px-5 py-3">Claim Ref</th>
-                  <th className="px-5 py-3">Payer</th>
-                  <th className="px-5 py-3">Received</th>
-                  <th className="px-5 py-3">Pipeline</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-ink-100">
-                {denialsQuery.data.items.map((d) => (
-                  <tr
-                    key={d.id}
-                    onClick={() => navigate(`/denials/${d.id}`)}
-                    className="cursor-pointer transition-colors hover:bg-brand-50/40"
-                  >
-                    <td className="px-5 py-3.5">
-                      <StatusPill status={d.status} />
-                    </td>
-                    <td className="px-5 py-3.5 font-medium text-ink-800">{d.claim_ref}</td>
-                    <td className="px-5 py-3.5 text-ink-600">{d.payer}</td>
-                    <td className="px-5 py-3.5 text-ink-500">{formatDate(d.received_at)}</td>
-                    <td className="px-5 py-3.5">
-                      <div className="flex items-center gap-1.5 text-xs text-ink-400">
-                        <PipelineDot done={d.has_classification} label="Classified" />
-                        <PipelineDot done={d.has_appeal} label="Appeal" />
-                      </div>
-                    </td>
+            <div className="table-scroll">
+              <table className="w-full min-w-[640px] text-sm">
+                <thead>
+                  <tr className="border-b border-ink-200 bg-ink-50/60 text-left text-xs font-semibold uppercase tracking-wide text-ink-500">
+                    <th className="px-5 py-3">Status</th>
+                    <th className="px-5 py-3">Claim Ref</th>
+                    <th className="px-5 py-3">Payer</th>
+                    <th className="px-5 py-3">Received</th>
+                    <th className="px-5 py-3">Pipeline</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-ink-100">
+                  {denialsQuery.data.items.map((d) => (
+                    <tr
+                      key={d.id}
+                      onClick={() => navigate(`/denials/${d.id}`)}
+                      className="cursor-pointer transition-colors hover:bg-brand-50/40"
+                    >
+                      <td className="px-5 py-3.5">
+                        <StatusPill status={d.status} />
+                      </td>
+                      <td className="px-5 py-3.5 font-medium text-ink-800">{d.claim_ref}</td>
+                      <td className="px-5 py-3.5 text-ink-600">{d.payer}</td>
+                      <td className="px-5 py-3.5 text-ink-500">{formatDate(d.received_at)}</td>
+                      <td className="px-5 py-3.5">
+                        <div className="flex items-center gap-1.5 text-xs text-ink-400">
+                          <PipelineDot done={d.has_classification} label="Classified" />
+                          <PipelineDot done={d.has_appeal} label="Appeal" />
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
 
           <div className="mt-4 flex items-center justify-between">

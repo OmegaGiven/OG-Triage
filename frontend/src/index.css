@@ -147,4 +147,24 @@
   .label {
     @apply block text-xs font-medium uppercase tracking-wide text-ink-500 mb-1;
   }
+
+  /* Horizontal-scroll wrapper for wide tables on narrow screens. Pure-CSS
+     scroll-shadow trick: two opaque cover gradients scroll with the content
+     (background-attachment: local) so they sit flush against the table's
+     white background, while two shadow gradients stay fixed to the
+     viewport edge (background-attachment: scroll) and fade out once
+     there's nothing left to scroll toward. No JS scroll-position tracking
+     needed. */
+  .table-scroll {
+    @apply overflow-x-auto;
+    background:
+      linear-gradient(to right, white 30%, rgba(255, 255, 255, 0)),
+      linear-gradient(to left, white 30%, rgba(255, 255, 255, 0)) 100% 0,
+      linear-gradient(to right, rgba(15, 23, 42, 0.12), rgba(15, 23, 42, 0)) ,
+      linear-gradient(to left, rgba(15, 23, 42, 0.12), rgba(15, 23, 42, 0)) 100% 0;
+    background-repeat: no-repeat;
+    background-color: white;
+    background-size: 24px 100%, 24px 100%, 10px 100%, 10px 100%;
+    background-attachment: local, local, scroll, scroll;
+  }
 }
