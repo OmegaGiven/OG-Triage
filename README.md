@@ -1,11 +1,12 @@
 # Gauge AI Automations — Claims Denial Triage + Appeal Drafting
 
-**Status: Phase 1-4 done.** This repo holds a pipeline that ingests insurance
+**Status: Phase 1-6 done.** This repo holds a pipeline that ingests insurance
 claim-denial letters, extracts structured fields, classifies the denial
 reason, and drafts an appeal letter, with a Postgres-backed audit trail and a
 deterministic eval/regression harness. The pipeline is profile-driven and
 currently drives two portfolio companies' claim types (eye-care and DME) off
-one shared codebase. A React/TypeScript review UI is not built yet.
+one shared codebase, is exposed over a FastAPI REST layer, and is reviewable
+through a React/TypeScript queue + detail UI.
 
 - **Phase 1** — the Postgres schema (`denials`, `extractions`,
   `classifications`, `appeals`, `corrections`, `eval_runs`, `token_usage`),
@@ -32,10 +33,14 @@ one shared codebase. A React/TypeScript review UI is not built yet.
   synthetic dataset. Proves the architecture generalizes to a genuinely
   different claim type on the same pipeline code. See "Phase 4 —
   Multi-Company Profiles" below.
-
-The `backend/requirements.txt` includes `fastapi` and `pydantic` because
-those are pinned dependencies for a future API/frontend phase, not because
-anything currently uses them.
+- **Phase 5** — `backend/api/`: a FastAPI REST layer over the pipeline, eval
+  harness, profiles, and usage data (denial worklist/detail, on-demand
+  processing, appeal review actions, corrections audit trail, eval-run
+  history, token/cost usage reporting). See "Phase 5 — API" below.
+- **Phase 6** — `frontend/`: a React + TypeScript + Vite review UI (queue
+  view + detail/review view) consuming the Phase 5 API, with React Query for
+  data fetching and Tailwind CSS for a small, consistent design system. See
+  "Phase 6 — Frontend (Queue + Review)" below.
 
 ## Repo layout
 
@@ -59,7 +64,18 @@ app/
     alembic/                      # migrations (one initial migration, matches models.py)
     requirements.txt
     .env.example
-  frontend/                       # placeholder, real scaffold is a later phase
+  frontend/                       # Phase 6: React + TypeScript + Vite review UI
+    src/
+      api/
+        types.ts                    # TypeScript interfaces mirroring api/schemas.py
+        client.ts                    # typed fetch wrapper (api.listDenials, api.processDenial, ...)
+      components/                   # StatusPill, ConfidenceBadge, KeyValueGrid, CorrectionForm, Modal, loading/error/empty states
+      pages/
+        QueueView.tsx                # denial worklist: filters, table, pagination
+        DetailView.tsx                 # the reviewer workspace (see below)
+      App.tsx                       # routing + top nav
+      index.css                     # design system (Tailwind v4 @theme block)
+    .env.example
   docker-compose.yml              # Postgres only
   README.md
 ```
@@ -441,6 +457,162 @@ prior `eval_runs` row) and exercised every endpoint with `curl`:
   CEP `$2.234616`, DME `$0.682545` (matches known prior-phase totals).
 - `GET /docs` and `/openapi.json` both return 200.
 
+## Phase 6 — Frontend (Queue + Review)
+
+A React + TypeScript + Vite app in `frontend/` that consumes the Phase 5
+API: a denial queue (worklist) view and a detail/review view, which is the
+"reviewer's workspace" the whole project builds up to — original letter,
+AI extraction, AI classification with a confidence indicator, the drafted
+appeal, and a real correction/audit-trail workflow, side by side.
+
+### Stack
+
+- **React 19 + TypeScript + Vite**, scaffolded with `npm create vite@latest
+  -- --template react-ts`.
+- **Tailwind CSS v4** (`@tailwindcss/vite` plugin) for styling. Tailwind v4
+  is CSS-first — there is no `tailwind.config.ts`; the design system lives
+  in a single `@theme` block at the top of `src/index.css` instead, which is
+  the v4-idiomatic equivalent of a config-file theme extension (colors,
+  radii, shadows defined once as CSS custom properties, consumed everywhere
+  as ordinary Tailwind utility classes like `bg-brand-600` or
+  `text-status-needs_review-fg`).
+- **React Router** (`react-router-dom`) for the two top-level views
+  (`/denials`, `/denials/:id`) — deliberately simple, no nested router.
+- **TanStack React Query** for all data fetching: loading/error/retry states
+  come from the library instead of hand-rolled `useEffect`/`useState`, and
+  mutations (process, appeal status, corrections) invalidate the relevant
+  query keys so the UI reflects the server state after every action without
+  manual refetch plumbing.
+
+### Design system
+
+Defined once in `src/index.css`'s `@theme` block, not redefined per
+component:
+
+- **Color** — a restrained slate-blue brand/accent (`brand-50`…`900`), a
+  cool-gray neutral/ink scale for text and surfaces (`ink-50`…`900`), and a
+  dedicated **semantic status palette**: one background/foreground pair per
+  `denials.status` value (`new`, `processing`, `classified`,
+  `appeal_drafted`, `needs_review`, `closed`) plus the separate
+  `appeals.status` values (`draft`, `approved`, `rejected`, `sent`), each
+  legible as a pill. A separate 3-step `confidence-low/mid/high` scale (red
+  / amber / green) drives the classification confidence bar independently
+  of the status palette.
+- **Typography** — Inter (Google Fonts, loaded in `index.html`), system-ui
+  fallback stack.
+- **Spacing/shape** — one `--radius-card` (cards) and `--radius-pill`
+  (status pills) token, one card shadow token, reused via a small set of
+  `@layer components` classes (`.card`, `.btn-primary/secondary/danger/
+  success`, `.input`, `.label`) instead of ad hoc utility strings scattered
+  across components.
+
+### Views
+
+- **Queue (`/denials`)** — table of denials from `GET /api/denials`, with
+  company (`GET /api/profiles`) and status filter dropdowns, a colored
+  status pill per row, and real pagination driven by the API's
+  `total`/`page`/`page_size` response fields (not a client-side slice of a
+  single fetched page). Skeleton loading state, an explicit empty state
+  ("no denials match these filters"), and an error state that surfaces the
+  actual failure reason instead of a blank screen.
+- **Detail (`/denials/:id`)** — `GET /api/denials/{id}` rendered as: the raw
+  denial letter (evidence panel), extracted fields as a labeled key-value
+  grid (not raw JSON), classification category + a color-coded confidence
+  bar (low confidence reads visually as "needs attention"), and the drafted
+  appeal letter directly below the extraction/classification, so a reviewer
+  can compare the original letter against the AI's output at a glance.
+  Actions: **Approve/Reject appeal** (`POST
+  /api/denials/{id}/appeal/status`); **Process with AI** for `status="new"`
+  denials (`POST /api/denials/{id}/process`), with a persistent in-progress
+  banner + disabled/spinner button state, since real Anthropic calls can
+  take 10-30+ seconds; and **Log a Correction** — a modal form (`POST
+  /api/denials/{id}/corrections`) that lets a reviewer re-pick the
+  classification category (or edit the appeal text, or correct an arbitrary
+  extracted field), pre-filled with the AI's current value, plus a required
+  reviewer name and free-text reason, matching the backend's actual
+  behavior of appending an audit row rather than mutating the original
+  AI output. Existing `corrections` for the denial are listed underneath
+  with an old-value → new-value diff and the reason.
+
+### Running it
+
+Backend (from repo root, Postgres already up via `docker-compose up -d`):
+
+```bash
+cd backend
+source ../.venv/bin/activate
+uvicorn main:app --reload --port 8000
+```
+
+Frontend:
+
+```bash
+cd frontend
+npm install
+cp .env.example .env.local   # VITE_API_BASE_URL=http://localhost:8000/api
+npm run dev
+```
+
+Serves on `http://localhost:5173`. `backend/main.py`'s CORS config already
+allow-lists this origin.
+
+### Verification
+
+Ran both servers live against the real seeded database (62 denials: 48 CEP
++ 14 DME, all previously processed by Phases 2/4) and exercised the app in
+an actual browser (Playwright), not just `npm run build`:
+
+- **Queue** loaded all 62 real denials with correct status pills, payer,
+  claim ref, and received date; company filter (`Comprehensive EyeCare
+  Partners` / `Reliable Medical`) and status filter both re-queried the API
+  and changed the result set correctly (confirmed `status=new` correctly
+  returned 0 results — every seeded denial has already been processed by an
+  earlier phase — and `status=needs_review` correctly returned 11).
+  Pagination showed "Page 1 of 4" at `page_size=20` and matched the API's
+  `total=62`.
+- **Empty state** — filtering to `status=new` (0 matches) rendered the
+  intentional "No denials match these filters" empty state, not a blank
+  table.
+- **Detail view** — opened a `needs_review` denial (CLM-9427497, 55%
+  confidence) and confirmed the extraction key-value grid, classification
+  pill + red low-confidence bar, and "No appeal drafted yet" all matched the
+  real API response exactly.
+- **Correction flow** — submitted a real correction
+  (`classification.category`: `coding_error` → `medical_necessity`, with
+  reviewer + notes) through the modal; confirmed via direct `curl` against
+  `GET /api/denials/{id}` that the `corrections` array actually persisted
+  the new row server-side, and that the UI's correction-history list
+  updated automatically (React Query cache invalidation) without a manual
+  page refresh.
+- **Appeal approve** — approved a drafted appeal (CLM-1263973) through the
+  UI; confirmed via direct API call that `appeal.status`, `appeal.reviewer`,
+  and `appeal.reviewed_at` were all updated server-side, and the pill
+  flipped to green "Approved" in the UI.
+- **Process with AI** — reset one denial to `status="new"` directly in
+  Postgres to exercise this path (all 62 seeded denials had already been
+  processed by earlier phases), clicked "Process with AI," confirmed the
+  button disabled, the spinner + "Processing (this can take 10-30s)…"
+  banner appeared immediately, and — after a real ~15s Anthropic API round
+  trip — the page updated automatically to the new pipeline result
+  (re-landed on `needs_review` at the same 55% confidence, consistent with
+  the deterministic-ish behavior of the same input/prompt) with no manual
+  refresh needed.
+- **Error state** — pointed `VITE_API_BASE_URL` at an unreachable port
+  (`:9999`), reloaded the queue, and confirmed a clean "Something went
+  wrong / Could not reach the API… Is the backend running?" card with a
+  Retry button — not a blank page or an unhandled exception. Restored the
+  correct URL afterward and reconfirmed the queue loaded real data again.
+- No console errors during any of the above.
+
+No backend code was modified for this phase — the Phase 5 API's shapes
+matched what the frontend needed exactly as documented in
+`api/schemas.py`.
+
 ## What's next (not built yet)
 
-The React frontend, consuming this API.
+The eval/monitoring dashboard (surfacing `GET /api/eval/runs` and `GET
+/api/usage` in the UI) and a profile-switcher demo — both explicitly
+deferred out of Phase 6's scope. The frontend's API client
+(`src/api/client.ts`) and design system (`src/index.css`) already cover
+what those views would need (usage/eval types are in `src/api/types.ts`),
+so adding them should mean new pages, not new plumbing.

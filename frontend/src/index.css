@@ -1,0 +1,137 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------
+ * Design system (Phase 6)
+ *
+ * Tailwind v4 uses a CSS-first theme (no tailwind.config.ts needed) --
+ * everything below becomes real Tailwind utilities (bg-brand-600,
+ * text-status-approved, font-display, etc.) usable anywhere in the app.
+ * Centralizing it here is the equivalent of a `tailwind.config.ts` theme
+ * extension: one source of truth, not ad hoc colors per component.
+ * ------------------------------------------------------------------- */
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  /* Brand / primary accent -- a restrained slate-blue, clean fintech/health
+     SaaS territory rather than a loud "AI product" purple. */
+  --color-brand-50: #eff6fb;
+  --color-brand-100: #dbeafe;
+  --color-brand-200: #bfdcf5;
+  --color-brand-300: #8fc2ec;
+  --color-brand-400: #559fdc;
+  --color-brand-500: #2f7fc4;
+  --color-brand-600: #1f63a3;
+  --color-brand-700: #1c4f82;
+  --color-brand-800: #1a416b;
+  --color-brand-900: #17365a;
+
+  /* Neutral surface/text scale -- cool gray, not pure black/white. */
+  --color-ink-50: #f8fafc;
+  --color-ink-100: #f1f5f9;
+  --color-ink-200: #e2e8f0;
+  --color-ink-300: #cbd5e1;
+  --color-ink-400: #94a3b8;
+  --color-ink-500: #64748b;
+  --color-ink-600: #475569;
+  --color-ink-700: #334155;
+  --color-ink-800: #1e293b;
+  --color-ink-900: #0f172a;
+
+  /* Semantic status colors -- one hue per denial-lifecycle state, tuned
+     for legibility as both pill-background and pill-text pairs. */
+  --color-status-new: #64748b;
+  --color-status-new-bg: #f1f5f9;
+  --color-status-new-fg: #334155;
+
+  --color-status-processing: #a16207;
+  --color-status-processing-bg: #fef3c7;
+  --color-status-processing-fg: #854d0e;
+
+  --color-status-classified: #1d4ed8;
+  --color-status-classified-bg: #dbeafe;
+  --color-status-classified-fg: #1e40af;
+
+  --color-status-appeal_drafted: #7c3aed;
+  --color-status-appeal_drafted-bg: #ede9fe;
+  --color-status-appeal_drafted-fg: #6d28d9;
+
+  --color-status-needs_review: #c2410c;
+  --color-status-needs_review-bg: #ffedd5;
+  --color-status-needs_review-fg: #9a3412;
+
+  --color-status-approved: #15803d;
+  --color-status-approved-bg: #dcfce7;
+  --color-status-approved-fg: #166534;
+
+  --color-status-rejected: #b91c1c;
+  --color-status-rejected-bg: #fee2e2;
+  --color-status-rejected-fg: #991b1b;
+
+  --color-status-sent: #0e7490;
+  --color-status-sent-bg: #cffafe;
+  --color-status-sent-fg: #155e75;
+
+  /* Confidence scale -- reused by the confidence bar/badge. */
+  --color-confidence-low: #dc2626;
+  --color-confidence-mid: #d97706;
+  --color-confidence-high: #16a34a;
+
+  /* Consistent corner-radius scale. */
+  --radius-card: 0.75rem;
+  --radius-pill: 999px;
+
+  /* Shadow tuned for cards on a light gray canvas. */
+  --shadow-card: 0 1px 2px 0 rgb(15 23 42 / 0.04), 0 1px 3px 0 rgb(15 23 42 / 0.08);
+  --shadow-card-hover: 0 4px 8px -2px rgb(15 23 42 / 0.08), 0 2px 4px -2px rgb(15 23 42 / 0.06);
+}
+
+@layer base {
+  body {
+    @apply bg-ink-50 text-ink-800 antialiased;
+    font-feature-settings: "cv11", "ss01";
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-white rounded-[var(--radius-card)] border border-ink-200 shadow-[var(--shadow-card)];
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-md px-3.5 py-2 text-sm font-medium
+      transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none
+      focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-500;
+  }
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-md px-3.5 py-2 text-sm font-medium
+      transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none
+      focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-500
+      bg-brand-600 text-white hover:bg-brand-700 shadow-sm;
+  }
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-md px-3.5 py-2 text-sm font-medium
+      transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none
+      focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-500
+      bg-white text-ink-700 border border-ink-300 hover:bg-ink-50;
+  }
+  .btn-danger {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-md px-3.5 py-2 text-sm font-medium
+      transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none
+      focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-500
+      bg-white text-status-rejected border border-status-rejected/30 hover:bg-status-rejected-bg;
+  }
+  .btn-success {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-md px-3.5 py-2 text-sm font-medium
+      transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none
+      focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-500
+      bg-white text-status-approved border border-status-approved/30 hover:bg-status-approved-bg;
+  }
+
+  .input {
+    @apply block w-full rounded-md border border-ink-300 bg-white px-3 py-2 text-sm text-ink-800
+      placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500;
+  }
+  .label {
+    @apply block text-xs font-medium uppercase tracking-wide text-ink-500 mb-1;
+  }
+}
