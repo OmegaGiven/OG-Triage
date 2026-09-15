@@ -1,7 +1,7 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: gauge_ai_postgres
+    container_name: og_triage_postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: gauge
@@ -20,3 +20,8 @@ services:
 
 volumes:
   gauge_ai_pgdata:
+    # Pinned to the volume already created under the old "app" project name
+    # (app_gauge_ai_pgdata) so moving/renaming this directory doesn't cause
+    # Compose to spin up a fresh, empty volume under a new project namespace
+    # and orphan the existing demo data.
+    name: app_gauge_ai_pgdata

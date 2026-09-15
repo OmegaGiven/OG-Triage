@@ -1,19 +1,32 @@
-# Gauge AI Automations — Claims Denial Triage + Appeal Drafting
+# OG-Triage
 
-**Status: Phase 1-10 done, plus manual denial creation, reprocess-from-detail-view,
-and a unified immutable audit-event log covering corrections, appeal-review
-decisions, AND the AI pipeline's own extraction/classification/appeal-drafting
-actions (see "Audit history — a unified, immutable event log" and "AI-action
-audit events" below).** This repo holds a
-pipeline that ingests insurance claim-denial letters, extracts structured
-fields, classifies the denial reason, and drafts an appeal letter, with a
-Postgres-backed audit trail and a deterministic eval/regression harness. The
-pipeline is profile-driven and currently drives two portfolio companies'
-claim types (eye-care and DME) off one shared codebase, is exposed over a
-FastAPI REST layer, and is reviewable through a React/TypeScript queue +
-detail UI with a monitoring dashboard, a live, side-by-side multi-company
-demo, and a "New Denial" flow for pasting in a real denial letter live (see
-"Manual denial creation" below).
+**A generic AI harness for turning inbound email/documents into structured,
+confidence-gated responses.** Ingest → extract structured fields → classify
+→ generate a grounded response, with a Postgres-backed audit trail and a
+deterministic eval/regression harness underneath every profile. The harness
+itself is domain-agnostic — what it does is entirely defined by a
+`UseCaseProfile` (extraction schema, classification taxonomy, generation
+prompts/guidance), so the same pipeline can drive completely different
+verticals off one shared codebase.
+
+**Current use-case profile: claims denial triage + appeal drafting.** This
+is the first (and so far only) profile built on the harness — it ingests
+insurance claim-denial letters, extracts structured fields, classifies the
+denial reason, and drafts an appeal letter. It currently drives two
+portfolio companies' claim types (eye-care and DME) off the same profile
+abstraction, is exposed over a FastAPI REST layer, and is reviewable
+through a React/TypeScript queue + detail UI with a monitoring dashboard, a
+live side-by-side multi-company demo, and a "New Denial" flow for pasting
+in a real denial letter live (see "Manual denial creation" below).
+
+**Where this is headed**: generalizing from "upload a document" to
+"connect an inbox" — Gmail/Microsoft Graph/Front connectors feeding the
+same harness, landing generated responses as drafts rather than auto-sent.
+See `docs/GENERIC_HARNESS_DESIGN.md` for the full design plan
+(connector architecture, platform feasibility, build order). The
+`CompanyProfile` abstraction below is being renamed `UseCaseProfile` and
+widened as part of that work — the phase notes below still refer to it by
+its original name until that refactor lands.
 
 - **Phase 1** — the Postgres schema (`denials`, `extractions`,
   `classifications`, `appeals`, `corrections`, `eval_runs`, `token_usage`; the
