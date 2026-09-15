@@ -34,11 +34,17 @@ not a single fixed tool.
   recruiter/hiring emails, tailors a resume per job description, and
   drafts a grounded reply for human review. See its own README for setup.
 - **Planned / open to requests** — more connectors (Microsoft Graph,
-  Front, generic IMAP) and more use-case profiles (support-ticket triage,
-  vendor-dispute response, whatever the next real need turns out to be).
-  See `docs/GENERIC_HARNESS_DESIGN.md` for the connector-platform
-  feasibility breakdown and build order. Open an issue if you want a
-  specific use case or connector built out.
+  Front, generic IMAP), more use-case profiles (support-ticket triage,
+  vendor-dispute response, whatever the next real need turns out to be),
+  and MCP-backed tool access for generation stages that need to check an
+  external system before drafting (e.g. an appeal profile pulling
+  supporting evidence from a secured medical-records MCP server, or a
+  bug-triage profile querying a root-cause-analysis tool) — see
+  `docs/GENERIC_HARNESS_DESIGN.md` section 7 for the tenant-isolation and
+  audit-trail design that makes that safe to build. See the same doc for
+  the connector-platform feasibility breakdown and build order. Open an
+  issue if you want a specific use case, connector, or MCP integration
+  built out.
 
 The `CompanyProfile` abstraction referenced in the phase notes below is
 being renamed `UseCaseProfile` and widened as part of generalizing the

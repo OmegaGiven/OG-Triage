@@ -189,6 +189,12 @@ class OutboundConnector(Protocol):
    (e.g. a support-ticket triage or vendor-dispute-response profile), to
    prove the taxonomy/prompt abstraction generalizes as well as the
    connector layer does.
+7. **Tool-augmented generation (section 7)** — only build this once a real
+   profile actually needs it. Denial triage doesn't need it to work today
+   (the letter carries its own facts); it becomes real the moment someone
+   wants evidence-grounded appeals or a diagnostic-lookup profile. Don't
+   build the MCP-binding plumbing speculatively — build it against the
+   first profile that has an actual external data source to call.
 
 ## 6. What stays exactly as it is today
 
@@ -200,3 +206,135 @@ class OutboundConnector(Protocol):
   parallel logging system.
 - The confidence-gated human review pattern — becomes the same gate that
   decides draft-vs-send on the outbound side, not a new concept.
+
+## 7. Tool-augmented generation: MCP access per use-case profile
+
+Everything in sections 1-6 assumes generation has everything it needs
+already sitting in `extracted` + `classification`. That's true for denial
+triage today (the letter itself carries every fact the appeal draft cites),
+but it isn't true in general. Two motivating cases:
+
+- **Denial triage, done properly**: a strong appeal doesn't just restate
+  the claim, it cites supporting evidence — prior authorization on file,
+  the patient's actual clinical record, prior claims history showing a
+  pattern. That evidence usually lives in a system the harness doesn't
+  have inline access to: a claims/EHR-adjacent database, reachable only
+  through the client's own secured interface.
+- **A hypothetical bug-triage profile**: routing an inbound bug report
+  isn't just classification — a good response cites what's actually
+  wrong, which means querying a root-cause-analysis tool (log
+  correlation, stack-trace clustering, whatever the org already runs)
+  mid-draft, not guessing from the bug report text alone.
+
+Both are the same shape: **generation sometimes needs to call out to an
+external, tenant-specific data source before it can write a grounded
+response.** That's a real architecture change, not a config tweak — it
+means the generation stage stops being a single forced-tool call and
+becomes an actual agentic loop (see the harness/tool-loop pattern already
+documented for module 1 of the AI Engineer Academy content): the model can
+emit a tool call, the harness executes it against an MCP server, the
+result comes back into context, and the model continues — potentially
+several rounds — before producing the final draft.
+
+### 7.1 What a profile declares vs. what a tenant configures
+
+Same separation of concerns as the rest of the profile abstraction: a
+`UseCaseProfile` declares *which* MCP capabilities its generation stage is
+allowed to use; the actual connection, credentials, and endpoint are
+tenant-specific runtime config, resolved at call time — never baked into
+the profile code, which is shared across every tenant running that profile.
+
+```python
+@dataclass(frozen=True)
+class MCPServerBinding:
+    name: str                  # e.g. "medical_records", "root_cause_debugger"
+    allowed_tools: list[str]   # explicit allowlist -- not "every tool this server exposes"
+    required: bool             # True: missing/unreachable blocks/downgrades to human review.
+                                # False: generation degrades gracefully (skip augmentation,
+                                # flag lower confidence) rather than failing outright.
+    data_sensitivity: str      # "phi" | "internal" | "public" -- drives audit-log
+                                # handling (see 7.3) and whether results can be cached.
+
+# Declared on the profile (shared code, no tenant-specific values):
+mcp_servers: list[MCPServerBinding] = [
+    MCPServerBinding(
+        name="medical_records",
+        allowed_tools=["lookup_prior_authorization", "lookup_claims_history"],
+        required=True,          # an appeal drafted without checkable evidence
+                                 # should not go out as a confident auto-draft
+        data_sensitivity="phi",
+    ),
+]
+
+# Resolved per-tenant at runtime, outside the profile, from a credential
+# store keyed on (tenant_id, mcp_server_name) -- endpoint URL, auth
+# (API key / OAuth / mTLS cert), and which of the tenant's own systems it
+# actually points at. The profile never sees another tenant's binding.
+```
+
+### 7.2 Tenant isolation is the actual hard requirement here
+
+This is the one place in the whole design where a mistake is genuinely
+dangerous, not just embarrassing — cross-tenant data leakage through a
+shared MCP binding (Company A's generation call somehow reaching Company
+B's medical-records server, or vice versa) would be a real compliance
+failure, not a bug report. Two independent layers, deliberately redundant:
+
+1. **Harness-level**: MCP server connection + credentials are always
+   resolved from `(tenant_id, mcp_server_name)`, sourced from the same
+   request context that already scopes everything else (the `intake_item`
+   being processed). There is no code path where a generation call can
+   reach a binding belonging to a different tenant than the one it's
+   processing for.
+2. **Tool-level, at the MCP server itself**: the tools a sensitive server
+   exposes should be scoped narrow by design — "look up the prior
+   authorization for claim ID X" (X already known from the extraction
+   stage), not "search all patient records." Least-privilege at the tool's
+   own capability surface, not just at the harness's allowlist — the
+   allowlist is defense in depth, not the only control.
+
+`allowed_tools` matters independently of tenant isolation too: an MCP
+server may expose more tools than any single profile should be able to
+call (e.g. a medical-records server might also expose write/update tools
+that no drafting profile should ever touch) — the allowlist is what keeps
+a profile that only needs read-only lookups from ever being handed a tool
+that can mutate the underlying system.
+
+### 7.3 Audit trail for tool calls, and what a PHI-sensitivity tag actually does
+
+Every MCP tool call and its result gets a row in the same audit trail as
+everything else — this isn't a new logging system, it's the existing
+"every AI and human decision logged, immutable" principle extended to
+cover tool calls the model made during generation. What `data_sensitivity`
+controls is *what gets persisted*, not *whether* it gets logged:
+
+- `"public"` / `"internal"`: log the full tool call + result verbatim,
+  same as any other audit row.
+- `"phi"`: log that the call happened, which tool, which record was
+  referenced (e.g. a claim/auth ID, not the clinical content itself), and
+  a hash/reference rather than the raw sensitive payload. The raw result
+  stays in the model's context for that single generation call and is not
+  persisted a second time in a general-purpose audit table. If deeper
+  forensic replay is ever needed, that's a separate, more tightly
+  access-controlled store — not the same table everything else lands in.
+
+### 7.4 Confidence gating extends naturally to "did the lookup even work"
+
+This isn't a new concept layered on top of the existing confidence-gate
+pattern — a failed or ambiguous MCP lookup is just another input to the
+same gate that already decides `needs_review`. Concretely:
+
+- `required=True` binding unreachable/times out → generation does not
+  proceed to a confident auto-draft; the item routes to human review with
+  a clear note of what couldn't be verified. (This is the right default
+  for the appeal-evidence case — a confident-sounding appeal that turns
+  out to cite nothing real is worse than no draft.)
+- `required=False` binding unreachable → generation proceeds without that
+  augmentation, but the resulting confidence score reflects the gap (e.g.
+  a bug-triage draft that couldn't get a root-cause hit should say so and
+  score lower than one that did, not silently guess and sound equally
+  sure either way).
+- Tool call succeeds but returns something ambiguous/conflicting (e.g. two
+  contradictory prior-authorization records) → treated the same as any
+  other low-confidence classification: flagged for human review rather
+  than the model picking one and moving on.
