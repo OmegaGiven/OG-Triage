@@ -62,13 +62,19 @@ tailored resume, draft reply text) without actually creating a Gmail
 draft or writing to state.sqlite as "processed" — safe to run repeatedly
 while you're checking it's behaving the way you want.
 
-### 5. Review your facts
+### 5. Set up your facts
 
-Open `facts.json` and edit it to match what you actually want revealed —
-phone, LinkedIn, compensation framing, what to never disclose. This file
-is the entire source of truth for what the assistant says about you.
-`content_library.json` holds the real resume bullets/projects it tailors
-from — add to it if you want new projects/bullets available for selection.
+```bash
+cp facts.example.json facts.json
+cp content_library.example.json content_library.json
+```
+
+Both are gitignored — your real versions never get committed. Edit
+`facts.json` to match what you actually want revealed — phone, LinkedIn,
+compensation framing, what to never disclose. This file is the entire
+source of truth for what the assistant says about you. Edit
+`content_library.json` with your real resume bullets/projects — this is
+the entire source of truth for resume tailoring.
 
 ## Running for real
 

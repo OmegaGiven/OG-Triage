@@ -1,0 +1,50 @@
+{
+  "_comment": "Copy this file to content_library.json and fill it with YOUR real resume content. This is the entire source of truth for resume tailoring -- the LLM call in resume_builder.py selects, reorders, and lightly rewords content FROM this file only. It is explicitly instructed never to invent employers, dates, titles, or quantitative claims not present here. employer_bullets are meant to be fixed (never dropped or fabricated, may be reordered within an employer); projects/tagline/profile are the flexible pool it selects and adapts from per job description. This file is gitignored -- your real version never gets committed.",
+
+  "header": {
+    "name": "Your Name",
+    "location": "City, State"
+  },
+
+  "tagline_options": [
+    "A resume tagline variant, e.g. 'Software Engineer  •  Focus Area  •  Focus Area'",
+    "A second variant emphasizing different strengths",
+    "A third variant if you want more framing options for the model to choose from"
+  ],
+
+  "profile_summary_options": [
+    "A profile-summary paragraph variant matching one framing of your experience.",
+    "A second variant emphasizing a different angle (e.g. more AI/agentic-focused).",
+    "A third variant if useful (e.g. more generalist full-stack framing)."
+  ],
+
+  "employer_bullets": {
+    "Your Employer Name": {
+      "title": "Your title there",
+      "dates": "fixed, do not alter",
+      "bullets": [
+        {
+          "text": "A real, specific bullet describing what you did and its impact.",
+          "tags": ["tag1", "tag2", "tag3"]
+        }
+      ]
+    }
+  },
+
+  "projects": [
+    {
+      "name": "Project Name",
+      "stack": "Languages, Frameworks, Infra",
+      "description": "What it does, what's technically interesting about it, and any real metrics.",
+      "link": "https://github.com/your-handle/project (or null)",
+      "tags": ["relevant", "search", "tags", "for", "jd-matching"]
+    }
+  ],
+
+  "skills_master_list": {
+    "languages": ["Language (years)"],
+    "ai_ml": ["Relevant AI/ML skills"],
+    "infra": ["Relevant infra/tooling"],
+    "practices": ["Relevant engineering practices"]
+  }
+}

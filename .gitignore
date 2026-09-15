@@ -12,3 +12,7 @@ gmail-assistant/state.sqlite
 gmail-assistant/.venv/
 gmail-assistant/.env
 gmail-assistant/output/
+
+# Real personal facts/career data -- see .example versions instead
+gmail-assistant/facts.json
+gmail-assistant/content_library.json

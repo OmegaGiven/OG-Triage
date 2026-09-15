@@ -1,0 +1,53 @@
+{
+  "_comment": "Copy this file to facts.json and edit it to match what YOU actually want revealed. Nothing outside facts.json + content_library.json is ever used as a source of facts about you. facts.json is gitignored -- your real version never gets committed.",
+
+  "identity": {
+    "full_name": "Your Name",
+    "email": "you@example.com",
+    "phone": "555-000-0000",
+    "location": "City, State",
+    "linkedin": "https://www.linkedin.com/in/your-handle",
+    "github": "https://github.com/your-handle"
+  },
+
+  "current_role": {
+    "title": "Your current title",
+    "company": "Your current company",
+    "tenure": "e.g. 1+ year",
+    "note": "Free-text guidance for the model on how/when to mention this -- e.g. whether to volunteer the employer name unprompted."
+  },
+
+  "availability": {
+    "notice_period": "e.g. Standard two weeks",
+    "start_date_flexibility": "Free text",
+    "interview_availability": "Free text -- give concrete guidance, not just 'flexible'"
+  },
+
+  "compensation": {
+    "target_base": 0,
+    "flexibility": "Free text",
+    "disclose_number_unprompted": false,
+    "note": "Guidance on when the target number should/shouldn't be stated."
+  },
+
+  "work_authorization": {
+    "status": "e.g. US Citizen / Permanent Resident / visa type",
+    "sponsorship_needed": false
+  },
+
+  "location_preference": {
+    "open_to": ["Remote", "Hybrid", "On-site in <your area>"],
+    "relocation": false
+  },
+
+  "summary_for_replies": "A short paragraph summarizing your background -- this is the closest thing to freeform text the model gets, everything else should be structured facts above.",
+
+  "never_reveal": [
+    "Exact home address -- city/state only",
+    "References -- offer to provide upon request, don't include contact info unprompted",
+    "Prior salary / salary history",
+    "Add anything else you want hard-blocked regardless of what's asked"
+  ],
+
+  "reply_tone": "Describe the tone you want -- professional, warm, concise, etc."
+}
