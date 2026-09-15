@@ -1,0 +1,53 @@
+{
+  "_comment": "Edit this file directly to control exactly what the assistant is willing to reveal in drafted replies. Nothing outside this file + content_library.json is ever used as a source of facts about you.",
+
+  "identity": {
+    "full_name": "Nathan Johnson",
+    "email": "nathan9j@gmail.com",
+    "phone": "240-899-1452",
+    "location": "Dallas, Texas",
+    "linkedin": "https://linkedin.com/in/nathan-johnson-a29799a6",
+    "github": "https://github.com/OmegaGiven"
+  },
+
+  "current_role": {
+    "title": "Software Engineer",
+    "company": "Highway",
+    "tenure": "1+ year",
+    "note": "Client-facing API integration, internal tooling, agentic AI automation. Referenced generically as 'my current role' unless the recruiter is clearly already past an initial screen -- don't volunteer the employer name in a first-contact reply unless asked directly."
+  },
+
+  "availability": {
+    "notice_period": "Standard two weeks",
+    "start_date_flexibility": "Can discuss a specific start date once an offer is on the table",
+    "interview_availability": "Weekday evenings and most weekday daytime hours with notice -- offer 2-3 concrete windows when asked, don't just say 'flexible'"
+  },
+
+  "compensation": {
+    "target_base": 145000,
+    "flexibility": "Will move depending on total comp / benefits / equity",
+    "disclose_number_unprompted": false,
+    "note": "Only state the $145k target if directly asked for a number or range. If asked 'what are you currently making' or for salary history, don't disclose -- redirect to target comp instead."
+  },
+
+  "work_authorization": {
+    "status": "US Citizen",
+    "sponsorship_needed": false
+  },
+
+  "location_preference": {
+    "open_to": ["Remote", "Hybrid", "On-site in Dallas-Fort Worth"],
+    "relocation": false
+  },
+
+  "summary_for_replies": "6+ years of software engineering experience spanning JPMorgan Chase (release management, AI-directed deployment automation) and Highway (client-facing API integration, internal tooling, agentic AI workflows). Recent focus has been building and shipping real agentic AI systems -- tool-using pipelines, confidence-gated automation, eval harnesses -- both professionally and in a series of side projects.",
+
+  "never_reveal": [
+    "Exact home street address -- city/state only",
+    "References -- offer to provide upon request at a later stage, don't include contact info for references unprompted",
+    "Prior salary / salary history at any past employer",
+    "Anything about ongoing or recent interview processes with other companies -- don't name other employers currently interviewing you"
+  ],
+
+  "reply_tone": "Professional, warm, concise. Thank the sender, directly answer what they asked, attach the resume, offer to schedule a call. Avoid corporate filler ('I am writing to express my interest...'). Sound like a real person replying to email, not a form letter."
+}

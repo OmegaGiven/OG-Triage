@@ -4,3 +4,11 @@ __pycache__/
 .env
 *.egg-info/
 .DS_Store
+
+# gmail-assistant: personal secrets/state, never commit
+gmail-assistant/credentials.json
+gmail-assistant/token.json
+gmail-assistant/state.sqlite
+gmail-assistant/.venv/
+gmail-assistant/.env
+gmail-assistant/output/
