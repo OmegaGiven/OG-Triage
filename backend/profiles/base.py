@@ -6,7 +6,7 @@ company (Comprehensive EyeCare Partners). Phase 4 pulls everything that was
 company-specific -- the extraction tool schema, the system prompts for all
 three stages, and the appeal-drafting guidance -- out into a CompanyProfile,
 keyed off denials.source_company, so the SAME pipeline code drives multiple
-portfolio companies' claim types.
+companies' claim types.
 
 What stays fixed across every profile (not part of this class, deliberately):
   - The six CLASSIFICATION_CATEGORIES in db/models.py. These are genuinely

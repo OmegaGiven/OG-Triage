@@ -8,7 +8,7 @@ from sqlalchemy.orm import sessionmaker
 
 load_dotenv()
 
-DEFAULT_DATABASE_URL = "postgresql+psycopg://gauge:gauge_dev_password@localhost:5544/gauge_ai_claims"
+DEFAULT_DATABASE_URL = "postgresql+psycopg://og_triage:og_triage_dev_password@localhost:5544/og_triage"
 
 
 def get_database_url() -> str:

@@ -1,32 +1,49 @@
 # OG-Triage
 
-**A generic AI harness for turning inbound email/documents into structured,
-confidence-gated responses.** Ingest → extract structured fields → classify
-→ generate a grounded response, with a Postgres-backed audit trail and a
-deterministic eval/regression harness underneath every profile. The harness
-itself is domain-agnostic — what it does is entirely defined by a
-`UseCaseProfile` (extraction schema, classification taxonomy, generation
-prompts/guidance), so the same pipeline can drive completely different
-verticals off one shared codebase.
+**A generic, open AI harness for turning inbound email/documents into
+structured, confidence-gated responses — for any company, any use case.**
+Ingest → extract structured fields → classify → generate a grounded
+response, with a Postgres-backed audit trail and a deterministic
+eval/regression harness underneath every profile. The harness itself is
+domain-agnostic — what it does is entirely defined by a `UseCaseProfile`
+(extraction schema, classification taxonomy, generation prompts/guidance),
+so the same pipeline can drive completely different verticals, for
+completely different organizations, off one shared codebase. Nothing in
+the harness is tied to a specific company, industry, or business — every
+company-specific and organization-specific detail lives in a profile you
+plug in, not in the core.
 
-**Current use-case profile: claims denial triage + appeal drafting.** This
-is the first (and so far only) profile built on the harness — it ingests
-insurance claim-denial letters, extracts structured fields, classifies the
-denial reason, and drafts an appeal letter. It currently drives two
-portfolio companies' claim types (eye-care and DME) off the same profile
-abstraction, is exposed over a FastAPI REST layer, and is reviewable
-through a React/TypeScript queue + detail UI with a monitoring dashboard, a
-live side-by-side multi-company demo, and a "New Denial" flow for pasting
-in a real denial letter live (see "Manual denial creation" below).
+## Use cases
 
-**Where this is headed**: generalizing from "upload a document" to
-"connect an inbox" — Gmail/Microsoft Graph/Front connectors feeding the
-same harness, landing generated responses as drafts rather than auto-sent.
-See `docs/GENERIC_HARNESS_DESIGN.md` for the full design plan
-(connector architecture, platform feasibility, build order). The
-`CompanyProfile` abstraction below is being renamed `UseCaseProfile` and
-widened as part of that work — the phase notes below still refer to it by
-its original name until that refactor lands.
+The harness ships with one worked example so far, and is built to grow by
+request — new use-case profiles and connectors are welcome as contributions
+or requests, this is meant to become a small library of them over time,
+not a single fixed tool.
+
+- **Built — Claims denial triage + appeal drafting** (`backend/`): an
+  *optional, pluggable example* use-case profile, not the core product.
+  Ingests insurance claim-denial letters, extracts structured fields,
+  classifies the denial reason, and drafts an appeal letter. Ships with
+  two fully synthetic example client profiles (fictional companies, fake
+  data — see `backend/data/`) demonstrating the multi-tenant profile
+  pattern, exposed over a FastAPI REST layer, reviewable through a
+  React/TypeScript queue + detail UI with a monitoring dashboard and a
+  "New Denial" flow for pasting in a letter live.
+- **Built — Gmail job-inquiry assistant** (`gmail-assistant/`): a personal
+  instance of the harness wired to a real Gmail inbox — identifies
+  recruiter/hiring emails, tailors a resume per job description, and
+  drafts a grounded reply for human review. See its own README for setup.
+- **Planned / open to requests** — more connectors (Microsoft Graph,
+  Front, generic IMAP) and more use-case profiles (support-ticket triage,
+  vendor-dispute response, whatever the next real need turns out to be).
+  See `docs/GENERIC_HARNESS_DESIGN.md` for the connector-platform
+  feasibility breakdown and build order. Open an issue if you want a
+  specific use case or connector built out.
+
+The `CompanyProfile` abstraction referenced in the phase notes below is
+being renamed `UseCaseProfile` and widened as part of generalizing the
+harness — the phase notes still use its original name until that refactor
+lands.
 
 - **Phase 1** — the Postgres schema (`denials`, `extractions`,
   `classifications`, `appeals`, `corrections`, `eval_runs`, `token_usage`; the
@@ -147,8 +164,8 @@ against.)
 This brings up a single `postgres:16-alpine` container on **host port
 5544** (not the Postgres default 5432 — picked to avoid colliding with any
 Postgres already running on the dev machine), with a named volume
-(`gauge_ai_pgdata`) for persistence and a healthcheck. Database:
-`gauge_ai_claims`, user: `gauge`. See `docker-compose.yml` for credentials
+(`og_triage_pgdata`) for persistence and a healthcheck. Database:
+`og_triage`, user: `og_triage`. See `docker-compose.yml` for credentials
 (dev-only, not for anything resembling production use).
 
 ### 2. Python environment
@@ -179,7 +196,7 @@ alembic upgrade head
 place, or export `DATABASE_URL` directly:
 
 ```bash
-DATABASE_URL="postgresql+psycopg://gauge:gauge_dev_password@localhost:5544/gauge_ai_claims" alembic upgrade head
+DATABASE_URL="postgresql+psycopg://og_triage:og_triage_dev_password@localhost:5544/og_triage" alembic upgrade head
 ```
 
 ### 4. Seed the synthetic dataset
@@ -320,7 +337,7 @@ The Phase 2 pipeline (`extract.py`/`classify.py`/`draft_appeal.py`) was
 originally built with Comprehensive EyeCare Partners' extraction schema and
 prompt text hardcoded directly into those three files. Phase 4 pulls all of
 that company-specific configuration out into `backend/profiles/`, so the
-same pipeline code drives multiple portfolio companies, and adds a second
+same pipeline code drives multiple companies, and adds a second
 profile — "Reliable Medical," a fictional national complex rehab technology
 (CRT) / durable medical equipment (DME) provider — to prove it's a real
 abstraction and not just a plan for one.
@@ -796,11 +813,11 @@ actual browser via Playwright, not just a build check:
 ## Phase 8 — Multi-Company Live Demo
 
 `frontend/src/pages/ProfilesView.tsx` (route `/profiles`, "Profiles" in the
-top nav): the visual answer to the case study's explicitly required
-question, "how would you adapt this for a second portfolio company with a
-similar problem" — a live, clickable demo instead of something only
-explained in the Loom recording. Everything on this page is real: real API
-data, and a real Anthropic API call triggered from the browser.
+top nav): a live, clickable demo of the answer to "how would you adapt this
+for a second company with a similar problem" — every profile is switchable
+at runtime instead of something only explainable in words. Everything on
+this page is real: real API data, and a real Anthropic API call triggered
+from the browser.
 
 ### What's on it
 

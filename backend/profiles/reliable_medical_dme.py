@@ -1,7 +1,7 @@
 """
 CompanyProfile for Reliable Medical -- a fictional national complex rehab
 technology (CRT) / durable medical equipment (DME) provider. This is the
-second portfolio company added in Phase 4, to prove the pipeline built for
+second example company profile added in Phase 4, to prove the pipeline built for
 Comprehensive EyeCare Partners generalizes rather than being eye-care-only.
 
 What genuinely differs from the CEP profile, and why:

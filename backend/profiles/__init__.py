@@ -1,7 +1,7 @@
 """
 Company-profile registry: maps denials.source_company -> CompanyProfile.
 
-To add a third portfolio company:
+To add a third company/client profile:
   1. Create backend/profiles/<new_company_key>.py, following
      comprehensive_eyecare_partners.py / reliable_medical_dme.py as
      templates: define EXTRACTION_TOOL (the forced tool-use schema for
